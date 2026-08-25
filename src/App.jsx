@@ -717,7 +717,7 @@ function parse(x){
 // =========================
 
 const PAGE_W=210;
-const PAGE_H=123.75;
+const PAGE_H=114.6;
 
 let ticketTemplateCache=null;
 
@@ -848,31 +848,13 @@ async function batchPdf(ts,s){
 
 async function draw(pdf,t,s){
 
-  const gold=[
-    181,
-    136,
-    58
-  ];
+  const gold=[181,136,58];
+  const dark=[24,20,19];
+  const paper=[252,246,242];
 
-  const dark=[
-    24,
-    20,
-    19
-  ];
+  const background=await getTicketTemplate();
 
-  const paper=[
-    252,
-    246,
-    242
-  ];
-
-
-  // Mooie ticket-afbeelding ophalen
-  const background=
-    await getTicketTemplate();
-
-
-  // Hele originele ticket als achtergrond
+  // achtergrond
   pdf.addImage(
     background,
     'PNG',
@@ -882,162 +864,93 @@ async function draw(pdf,t,s){
     PAGE_H
   );
 
-
-  // =========================
-  // ECHTE QR-CODE
-  // =========================
-
-  const qr=
-    await QRCode.toDataURL(
-      payload(t),
-      {
-        errorCorrectionLevel:'H',
-        margin:1,
-        width:800,
-        color:{
-          dark:'#000000',
-          light:'#FFFFFF'
-        }
+  // echte QR
+  const qr=await QRCode.toDataURL(
+    payload(t),
+    {
+      errorCorrectionLevel:'H',
+      margin:1,
+      width:800,
+      color:{
+        dark:'#000000',
+        light:'#FFFFFF'
       }
-    );
-
-
-  /*
-    De originele afbeelding bevat al een voorbeeld QR.
-    We bedekken die plek eerst met een lichte achtergrond
-    en zetten daarna de echte ticket QR erboven.
-  */
-
-  pdf.setFillColor(
-    ...paper
+    }
   );
 
+  // QR vlak netjes op de juiste plek
+  pdf.setFillColor(...paper);
   pdf.roundedRect(
-    153,
-    41.5,
-    38,
-    38,
+    155.2,   // x
+    31.8,    // y
+    31.6,    // w
+    31.6,    // h
     2,
     2,
     'F'
   );
-
 
   pdf.addImage(
     qr,
     'PNG',
-    154.5,
-    43,
-    35,
-    35
+    156.5,   // x
+    33.1,    // y
+    29.0,    // w
+    29.0     // h
   );
 
-
-  // =========================
-  // TICKETNUMMER
-  // =========================
-
-  /*
-    Ook het voorbeeldticketnummer in de template
-    wordt afgedekt en vervangen door het echte nummer.
-  */
-
-  pdf.setFillColor(
-    ...dark
-  );
-
+  // ticketnummer vlak
+  pdf.setFillColor(...dark);
   pdf.roundedRect(
-    150.5,
-    101,
-    43.5,
-    13,
+    154.7,   // x
+    87.9,    // y
+    33.2,    // w
+    10.8,    // h
     2,
     2,
     'F'
   );
 
-
-  pdf.setTextColor(
-    ...gold
-  );
-
-  pdf.setFont(
-    'helvetica',
-    'bold'
-  );
-
-  pdf.setFontSize(
-    5.5
-  );
-
+  pdf.setTextColor(...gold);
+  pdf.setFont('helvetica','bold');
+  pdf.setFontSize(5.2);
   pdf.text(
     'TICKET NO.',
-    172.25,
-    105.8,
-    {
-      align:'center'
-    }
+    171.3,
+    91.8,
+    {align:'center'}
   );
 
-
-  pdf.setFontSize(
-    13.5
-  );
-
+  pdf.setFontSize(11.8);
   pdf.text(
     t.ticketNumber,
-    172.25,
-    112,
-    {
-      align:'center'
-    }
+    171.3,
+    97.0,
+    {align:'center'}
   );
 
-
-  // =========================
-  // OPTIONELE GASTNAAM
-  // =========================
-
+  // optionele gastnaam
   if(t.guestName){
 
-    pdf.setFillColor(
-      ...paper
-    );
-
+    pdf.setFillColor(...paper);
     pdf.roundedRect(
-      59,
-      88.8,
-      54,
-      9,
+      62.5,   // x
+      80.0,   // y
+      50.0,   // w
+      8.2,    // h
       1.5,
       1.5,
       'F'
     );
 
-
-    pdf.setTextColor(
-      ...dark
-    );
-
-    pdf.setFont(
-      'helvetica',
-      'bold'
-    );
-
-    pdf.setFontSize(
-      8
-    );
-
-
+    pdf.setTextColor(...dark);
+    pdf.setFont('helvetica','bold');
+    pdf.setFontSize(7.5);
     pdf.text(
       t.guestName,
-      86,
-      94.8,
-      {
-        align:'center'
-      }
+      87.5,
+      85.3,
+      {align:'center'}
     );
-
   }
-
 }
