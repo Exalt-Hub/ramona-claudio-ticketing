@@ -1,0 +1,19 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn(){ return request.auth != null; }
+    function userDoc(){ return get(/databases/$(database)/documents/rc_users/$(request.auth.uid)); }
+    function isAdmin(){ return signedIn() && userDoc().exists() && userDoc().data.role == 'admin'; }
+    function isScanner(){ return signedIn() && userDoc().exists() && (userDoc().data.role == 'scanner' || userDoc().data.role == 'admin'); }
+    match /rc_users/{userId} { allow read: if signedIn() && (request.auth.uid == userId || isAdmin()); allow create, update, delete: if isAdmin(); }
+    match /rc_event_settings/{docId} { allow read: if signedIn(); allow create, update, delete: if isAdmin(); }
+    match /rc_event_tickets/{ticketId} {
+      allow read: if isScanner();
+      allow create, delete: if isAdmin();
+      allow update: if isAdmin() || (isScanner() && resource.data.blocked == false && resource.data.status == 'unused' && request.resource.data.status == 'used' && request.resource.data.ticketNumber == resource.data.ticketNumber && request.resource.data.token == resource.data.token && request.resource.data.blocked == resource.data.blocked && request.resource.data.createdAt == resource.data.createdAt && request.resource.data.eventId == resource.data.eventId && request.resource.data.ticketType == resource.data.ticketType && request.resource.data.guestName == resource.data.guestName && request.resource.data.scannedBy == request.auth.uid);
+    }
+    match /rc_event_scans/{scanId} { allow read: if isAdmin(); allow create: if isScanner() && request.resource.data.scannerId == request.auth.uid; allow update, delete: if isAdmin(); }
+    match /rc_scanner_access/{docId} { allow read, write: if isAdmin(); }
+    match /{document=**} { allow read, write: if false; }
+  }
+}
