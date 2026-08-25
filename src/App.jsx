@@ -881,52 +881,54 @@ async function draw(pdf,t,s){
   // QR vlak netjes op de juiste plek
   pdf.setFillColor(...paper);
   pdf.roundedRect(
-    155.2,   // x
-    31.8,    // y
-    31.6,    // w
-    31.6,    // h
-    2,
-    2,
-    'F'
+  157.0,
+  34.5,
+  31.0,
+  31.0,
+  2,
+  2,
+  'F'
   );
 
   pdf.addImage(
-    qr,
-    'PNG',
-    156.5,   // x
-    33.1,    // y
-    29.0,    // w
-    29.0     // h
+  qr,
+  'PNG',
+  158.0,
+  35.5,
+  29.0,
+  29.0
   );
 
   // ticketnummer vlak
   pdf.setFillColor(...dark);
   pdf.roundedRect(
-    154.7,   // x
-    87.9,    // y
-    33.2,    // w
-    10.8,    // h
-    2,
-    2,
-    'F'
+  158.0,
+  91.0,
+  28.5,
+  8.5,
+  1.8,
+  1.8,
+  'F'
   );
 
-  pdf.setTextColor(...gold);
-  pdf.setFont('helvetica','bold');
-  pdf.setFontSize(5.2);
-  pdf.text(
-    'TICKET NO.',
-    171.3,
-    91.8,
-    {align:'center'}
+pdf.setTextColor(...gold);
+pdf.setFont('helvetica','bold');
+pdf.setFontSize(9.5);
+
+pdf.text(
+  t.ticketNumber,
+  172.25,
+  96.6,
+  {
+    align:'center'
   );
 
   pdf.setFontSize(11.8);
   pdf.text(
-    t.ticketNumber,
-    171.3,
-    97.0,
-    {align:'center'}
+  'TICKET NO.',
+  171.3,
+  91.8,
+  {align:'center'}
   );
 
   // optionele gastnaam
