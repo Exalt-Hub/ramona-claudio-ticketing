@@ -1,32 +1,10 @@
 import React,{useEffect,useRef,useState} from 'react';
-import {
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  runTransaction,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where
-} from 'firebase/firestore';
-
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut
-} from 'firebase/auth';
-
+import {collection,deleteDoc,doc,getDoc,getDocs,limit,onSnapshot,orderBy,query,runTransaction,serverTimestamp,setDoc,updateDoc,where} from 'firebase/firestore';
+import {onAuthStateChanged,signInWithEmailAndPassword,signOut} from 'firebase/auth';
 import {db,auth} from './firebase';
 import {Html5Qrcode} from 'html5-qrcode';
 import QRCode from 'qrcode';
 import {jsPDF} from 'jspdf';
-
 
 const EVENT={
   id:'ramona-claudio',
@@ -41,587 +19,254 @@ const EVENT={
   maxTickets:100
 };
 
-
 export default function App(){
-
   const[user,setUser]=useState(undefined);
   const[role,setRole]=useState(null);
 
   useEffect(
-    ()=>onAuthStateChanged(
-      auth,
-      async u=>{
+    ()=>onAuthStateChanged(auth,async u=>{
+      setUser(u||null);
+      setRole(null);
 
-        setUser(u||null);
-        setRole(null);
-
-        if(u){
-
-          const s=await getDoc(
-            doc(
-              db,
-              'rc_users',
-              u.uid
-            )
-          );
-
-          setRole(
-            s.exists()
-              ?s.data().role
-              :null
-          );
-        }
+      if(u){
+        const s=await getDoc(doc(db,'rc_users',u.uid));
+        setRole(s.exists()?s.data().role:null);
       }
-    ),
+    }),
     []
   );
 
-
-  if(user===undefined){
-    return <Splash/>;
-  }
-
-
-  if(!user){
-    return <Login/>;
-  }
-
+  if(user===undefined)return <Splash/>;
+  if(!user)return <Login/>;
 
   if(!role){
-
     return(
       <Center>
-
         <h2>Geen toegang</h2>
-
-        <p>
-          Maak eerst je rol aan in <code>rc_users</code>.
-        </p>
-
-        <button
-          className="btn"
-          onClick={()=>signOut(auth)}
-        >
-          Uitloggen
-        </button>
-
+        <p>Maak eerst je rol aan in <code>rc_users</code>.</p>
+        <button className="btn" onClick={()=>signOut(auth)}>Uitloggen</button>
       </Center>
     );
   }
 
-
-  return(
-    role==='scanner'
-    ||
-    location.pathname.toLowerCase().startsWith('/scanner')
-  )
-    ?<Scanner user={user}/>
-    :<Admin/>;
+  return role==='scanner'||location.pathname.toLowerCase().startsWith('/scanner')
+    ? <Scanner user={user}/>
+    : <Admin/>;
 }
 
-
-
 function Login(){
-
   const[e,setE]=useState('');
   const[p,setP]=useState('');
   const[err,setErr]=useState('');
 
-
   async function go(x){
-
     x.preventDefault();
 
     try{
-
       setErr('');
-
-      await signInWithEmailAndPassword(
-        auth,
-        e.trim(),
-        p
-      );
-
+      await signInWithEmailAndPassword(auth,e.trim(),p);
     }catch{
-
-      setErr(
-        'Inloggen is niet gelukt.'
-      );
+      setErr('Inloggen is niet gelukt.');
     }
   }
 
-
   return(
-
     <div className="login">
+      <form className="card" onSubmit={go}>
+        <small>RAMONA & CLAUDIO</small>
+        <h1>Event Ticketing</h1>
+        <p>Beheer en poortscanner</p>
 
-      <form
-        className="card"
-        onSubmit={go}
-      >
-
-        <small>
-          RAMONA & CLAUDIO
-        </small>
-
-        <h1>
-          Event Ticketing
-        </h1>
-
-        <p>
-          Beheer en poortscanner
-        </p>
-
-
-        <label>
-          E-mailadres
-        </label>
-
+        <label>E-mailadres</label>
         <input
           type="email"
           value={e}
-          onChange={
-            x=>setE(
-              x.target.value
-            )
-          }
+          onChange={x=>setE(x.target.value)}
           required
         />
 
-
-        <label>
-          Wachtwoord
-        </label>
-
+        <label>Wachtwoord</label>
         <input
           type="password"
           value={p}
-          onChange={
-            x=>setP(
-              x.target.value
-            )
-          }
+          onChange={x=>setP(x.target.value)}
           required
         />
 
+        {err&&<div className="alert">{err}</div>}
 
-        {
-          err
-          &&
-          <div className="alert">
-            {err}
-          </div>
-        }
-
-
-        <button className="btn full">
-          Inloggen
-        </button>
-
+        <button className="btn full">Inloggen</button>
       </form>
-
     </div>
   );
 }
 
-
-
 function Admin(){
-
   const[tickets,setTickets]=useState([]);
   const[settings,setSettings]=useState(EVENT);
   const[count,setCount]=useState(1);
   const[name,setName]=useState('');
   const[msg,setMsg]=useState('');
 
-
   useEffect(()=>{
+    const a=onSnapshot(
+      query(
+        collection(db,'rc_event_tickets'),
+        orderBy('ticketNumber')
+      ),
+      s=>setTickets(
+        s.docs.map(d=>({
+          id:d.id,
+          ...d.data()
+        }))
+      )
+    );
 
-    const ticketsListener=
-      onSnapshot(
-
-        query(
-          collection(
-            db,
-            'rc_event_tickets'
-          ),
-          orderBy(
-            'ticketNumber'
-          )
-        ),
-
-        snapshot=>{
-
-          setTickets(
-            snapshot.docs.map(
-              d=>({
-                id:d.id,
-                ...d.data()
-              })
-            )
-          );
+    const b=onSnapshot(
+      doc(db,'rc_event_settings',EVENT.id),
+      s=>{
+        if(s.exists()){
+          setSettings(v=>({
+            ...v,
+            ...s.data()
+          }));
         }
-      );
-
-
-    const settingsListener=
-      onSnapshot(
-
-        doc(
-          db,
-          'rc_event_settings',
-          EVENT.id
-        ),
-
-        snapshot=>{
-
-          if(snapshot.exists()){
-
-            setSettings(
-              current=>({
-                ...current,
-                ...snapshot.data()
-              })
-            );
-          }
-        }
-      );
-
+      }
+    );
 
     return()=>{
-
-      ticketsListener();
-      settingsListener();
-
+      a();
+      b();
     };
-
   },[]);
 
-
-
-  const used=
-    tickets.filter(
-      t=>t.status==='used'
-    ).length;
-
-
-  const blocked=
-    tickets.filter(
-      t=>t.blocked
-    ).length;
-
-
-  const unused=
-    tickets.filter(
-      t=>
-        t.status!=='used'
-        &&
-        !t.blocked
-    ).length;
-
-
+  const used=tickets.filter(t=>t.status==='used').length;
+  const blocked=tickets.filter(t=>t.blocked).length;
+  const unused=tickets.filter(t=>t.status!=='used'&&!t.blocked).length;
 
   async function generate(){
+    const qty=Math.max(
+      1,
+      Math.min(Number(count)||1,50)
+    );
 
-    try{
+    const max=Number(settings.maxTickets||100);
 
-      const qty=
-        Math.max(
-          1,
-          Math.min(
-            Number(count)||1,
-            50
-          )
-        );
-
-
-      const max=
-        Number(
-          settings.maxTickets
-          ||
-          100
-        );
-
-
-      if(
-        tickets.length+qty
-        >
-        max
-      ){
-
-        setMsg(
-          `Maximaal ${max} tickets.`
-        );
-
-        return;
-      }
-
-
-      const seen=
-        new Set(
-          tickets.map(
-            t=>t.ticketNumber
-          )
-        );
-
-
-      let made=0;
-      let n=1;
-
-
-      while(
-        made<qty
-      ){
-
-        const num=
-          `${
-            settings.ticketPrefix
-            ||
-            'RC'
-          }-${
-            String(n++)
-            .padStart(
-              4,
-              '0'
-            )
-          }`;
-
-
-        if(
-          seen.has(num)
-        ){
-          continue;
-        }
-
-
-        await setDoc(
-
-          doc(
-            db,
-            'rc_event_tickets',
-            num
-          ),
-
-          {
-            ticketNumber:num,
-            token:makeToken(),
-            status:'unused',
-            blocked:false,
-            scannedAt:null,
-            scannedBy:null,
-            createdAt:serverTimestamp(),
-            guestName:
-              qty===1
-                ?name.trim()
-                :'',
-            eventId:EVENT.id,
-            ticketType:'standard'
-          }
-
-        );
-
-
-        seen.add(num);
-
-        made++;
-      }
-
-
-      setName('');
-
-      setMsg(
-        `${qty} ticket${
-          qty===1
-            ?''
-            :'s'
-        } gegenereerd.`
-      );
-
-
-    }catch(error){
-
-      console.error(error);
-
-      setMsg(
-        'Tickets konden niet worden gegenereerd.'
-      );
+    if(tickets.length+qty>max){
+      setMsg(`Maximaal ${max} tickets.`);
+      return;
     }
+
+    const seen=new Set(
+      tickets.map(t=>t.ticketNumber)
+    );
+
+    let made=0;
+    let n=1;
+
+    while(made<qty){
+      const num=
+        `${settings.ticketPrefix||'RC'}-${String(n++).padStart(4,'0')}`;
+
+      if(seen.has(num))continue;
+
+      await setDoc(
+        doc(db,'rc_event_tickets',num),
+        {
+          ticketNumber:num,
+          token:makeToken(),
+          status:'unused',
+          blocked:false,
+          scannedAt:null,
+          scannedBy:null,
+          createdAt:serverTimestamp(),
+          guestName:qty===1?name.trim():'',
+          eventId:EVENT.id,
+          ticketType:'standard'
+        }
+      );
+
+      seen.add(num);
+      made++;
+    }
+
+    setName('');
+    setMsg(`${qty} ticket${qty===1?'':'s'} gegenereerd.`);
   }
 
-
-
   return(
-
     <div className="shell">
-
       <header>
-
         <div>
-
-          <small>
-            UITNODIGING
-          </small>
-
-          <h1>
-            {
-              settings.names
-              ||
-              EVENT.names
-            }
-          </h1>
-
+          <small>UITNODIGING</small>
+          <h1>{settings.names||EVENT.names}</h1>
         </div>
-
 
         <button
           className="ghost"
-          onClick={
-            ()=>signOut(auth)
-          }
+          onClick={()=>signOut(auth)}
         >
           Uitloggen
         </button>
-
       </header>
 
-
-
       <main>
-
-
         <section className="hero">
-
           <div>
-
-            <b>
-              43 & 45 CELEBRATION
-            </b>
+            <b>43 & 45 CELEBRATION</b>
 
             <h2>
-              {
-                settings.eventName
-                ||
-                EVENT.eventName
-              }
+              {settings.eventName||EVENT.eventName}
             </h2>
 
             <p>
-              {
-                settings.date
-                ||
-                EVENT.date
-              }
+              {settings.date||EVENT.date}
               {' · '}
-              {
-                settings.time
-                ||
-                EVENT.time
-              }
+              {settings.time||EVENT.time}
             </p>
 
             <p>
-              {
-                settings.location
-                ||
-                EVENT.location
-              }
+              {settings.location||EVENT.location}
               {' · '}
-              Dresscode:{' '}
-              {
-                settings.dresscode
-                ||
-                EVENT.dresscode
-              }
+              Dresscode: {settings.dresscode||EVENT.dresscode}
             </p>
-
           </div>
 
-
-          <span>
-            ONE-TIME ENTRY
-          </span>
-
+          <span>ONE-TIME ENTRY</span>
         </section>
-
-
 
         <section className="stats">
-
-          <Stat
-            n={tickets.length}
-            t="Totaal"
-          />
-
-          <Stat
-            n={unused}
-            t="Nog niet gescand"
-          />
-
-          <Stat
-            n={used}
-            t="Binnen"
-          />
-
-          <Stat
-            n={blocked}
-            t="Geblokkeerd"
-          />
-
+          <Stat n={tickets.length} t="Totaal"/>
+          <Stat n={unused} t="Nog niet gescand"/>
+          <Stat n={used} t="Binnen"/>
+          <Stat n={blocked} t="Geblokkeerd"/>
         </section>
 
-
-
         <section className="panel">
-
-          <h3>
-            Tickets genereren
-          </h3>
-
+          <h3>Tickets genereren</h3>
 
           <div className="formrow">
-
-
             <div>
-
-              <label>
-                Aantal
-              </label>
+              <label>Aantal</label>
 
               <input
                 type="number"
                 min="1"
                 max="50"
                 value={count}
-                onChange={
-                  e=>setCount(
-                    e.target.value
-                  )
-                }
+                onChange={e=>setCount(e.target.value)}
               />
-
             </div>
 
-
-
             <div>
-
-              <label>
-                Naam (optioneel bij 1 ticket)
-              </label>
+              <label>Naam (optioneel bij 1 ticket)</label>
 
               <input
                 value={name}
-                onChange={
-                  e=>setName(
-                    e.target.value
-                  )
-                }
+                onChange={e=>setName(e.target.value)}
                 placeholder="Bijv. Familie Jansen"
               />
-
             </div>
-
-
 
             <button
               className="btn"
@@ -630,60 +275,26 @@ function Admin(){
               Genereer
             </button>
 
-
-
             <button
               className="btn soft"
-              onClick={
-                ()=>batchPdf(
-                  tickets.filter(
-                    t=>!t.blocked
-                  ),
-                  settings
-                )
-              }
+              onClick={()=>batchPdf(
+                tickets.filter(t=>!t.blocked),
+                settings
+              )}
             >
               Alle PDF's
             </button>
-
           </div>
 
-
-
-          {
-            msg
-            &&
-            <div className="alert">
-              {msg}
-            </div>
-          }
-
+          {msg&&<div className="alert">{msg}</div>}
         </section>
 
-
-
         <section className="panel">
-
-
           <div className="titleline">
-
             <div>
-
-              <h3>
-                Tickets
-              </h3>
-
-              <p>
-                Limiet:{' '}
-                {
-                  settings.maxTickets
-                  ||
-                  100
-                }
-              </p>
-
+              <h3>Tickets</h3>
+              <p>Limiet: {settings.maxTickets||100}</p>
             </div>
-
 
             <a
               className="btn"
@@ -691,170 +302,78 @@ function Admin(){
             >
               Open scanner
             </a>
-
           </div>
-
-
 
           <div className="table">
+            {tickets.map(t=>
+              <div className="row" key={t.id}>
+                <strong>{t.ticketNumber}</strong>
 
-            {
-              tickets.map(
-                t=>
+                <Status t={t}/>
 
-                <div
-                  className="row"
-                  key={t.id}
-                >
+                <span>{t.guestName||'—'}</span>
 
-                  <strong>
-                    {t.ticketNumber}
-                  </strong>
+                <div className="actions">
+                  <button
+                    onClick={()=>ticketPdf(t,settings)}
+                  >
+                    PDF
+                  </button>
 
+                  <button
+                    onClick={()=>updateDoc(
+                      doc(db,'rc_event_tickets',t.id),
+                      {blocked:!t.blocked}
+                    )}
+                  >
+                    {t.blocked?'Deblokkeer':'Blokkeer'}
+                  </button>
 
-                  <Status t={t}/>
-
-
-                  <span>
-                    {
-                      t.guestName
-                      ||
-                      '—'
-                    }
-                  </span>
-
-
-
-                  <div className="actions">
-
-
-                    <button
-                      onClick={
-                        ()=>ticketPdf(
-                          t,
-                          settings
-                        )
+                  <button
+                    className="danger"
+                    onClick={async()=>{
+                      if(confirm(`${t.ticketNumber} verwijderen?`)){
+                        await deleteDoc(
+                          doc(db,'rc_event_tickets',t.id)
+                        );
                       }
-                    >
-                      PDF
-                    </button>
-
-
-
-                    <button
-                      onClick={
-                        ()=>updateDoc(
-
-                          doc(
-                            db,
-                            'rc_event_tickets',
-                            t.id
-                          ),
-
-                          {
-                            blocked:
-                              !t.blocked
-                          }
-
-                        )
-                      }
-                    >
-
-                      {
-                        t.blocked
-                          ?'Deblokkeer'
-                          :'Blokkeer'
-                      }
-
-                    </button>
-
-
-
-                    <button
-                      className="danger"
-                      onClick={
-                        async()=>{
-
-                          if(
-                            confirm(
-                              `${t.ticketNumber} verwijderen?`
-                            )
-                          ){
-
-                            await deleteDoc(
-                              doc(
-                                db,
-                                'rc_event_tickets',
-                                t.id
-                              )
-                            );
-                          }
-                        }
-                      }
-                    >
-                      Verwijder
-                    </button>
-
-
-                  </div>
-
+                    }}
+                  >
+                    Verwijder
+                  </button>
                 </div>
-              )
-            }
-
+              </div>
+            )}
           </div>
-
         </section>
-
-
       </main>
-
     </div>
   );
 }
 
-
-
 function Scanner({user}){
-
   const[result,setResult]=useState(null);
   const[manual,setManual]=useState('');
   const[active,setActive]=useState(false);
 
   const ref=useRef(null);
 
-
-
   useEffect(
     ()=>()=>stop(),
     []
   );
 
-
-
   async function start(){
-
     setResult(null);
 
     try{
+      const s=new Html5Qrcode('qr-reader');
 
-      const scanner=
-        new Html5Qrcode(
-          'qr-reader'
-        );
-
-
-      ref.current=scanner;
-
+      ref.current=s;
       setActive(true);
 
-
-      await scanner.start(
-
-        {
-          facingMode:'environment'
-        },
-
+      await s.start(
+        {facingMode:'environment'},
         {
           fps:10,
           qrbox:{
@@ -862,24 +381,13 @@ function Scanner({user}){
             height:260
           }
         },
-
-        async text=>{
-
+        async txt=>{
           await stop();
-
-          await process(text);
-
+          await process(txt);
         },
-
         ()=>{}
-
       );
-
-
-    }catch(error){
-
-      console.error(error);
-
+    }catch{
       setActive(false);
 
       setResult({
@@ -887,380 +395,205 @@ function Scanner({user}){
         title:'Camera niet beschikbaar',
         msg:'Controleer camera-toestemming.'
       });
-
     }
   }
 
-
-
   async function stop(){
-
     if(ref.current){
-
       try{
-
-        if(
-          ref.current.isScanning
-        ){
-
+        if(ref.current.isScanning){
           await ref.current.stop();
         }
 
-
         await ref.current.clear();
-
       }catch{}
-
 
       ref.current=null;
     }
 
-
     setActive(false);
   }
 
-
-
   async function process(raw){
+    const p=parse(raw);
 
-    const parsed=
-      parse(raw);
-
-
-    if(!parsed){
-
+    if(!p){
       setResult({
         type:'bad',
         title:'ONGELDIGE QR',
         msg:'Hoort niet bij dit event.'
       });
-
       return;
     }
 
+    const s=await getDocs(
+      query(
+        collection(db,'rc_event_tickets'),
+        where('token','==',p.token),
+        limit(1)
+      )
+    );
 
-    const snapshot=
-      await getDocs(
-
-        query(
-
-          collection(
-            db,
-            'rc_event_tickets'
-          ),
-
-          where(
-            'token',
-            '==',
-            parsed.token
-          ),
-
-          limit(1)
-
-        )
-      );
-
-
-    if(
-      snapshot.empty
-    ){
-
+    if(s.empty){
       setResult({
         type:'bad',
         title:'ONGELDIG',
         msg:'Ticket niet gevonden.'
       });
-
       return;
     }
 
-
-    await check(
-      snapshot.docs[0].ref
-    );
+    await check(s.docs[0].ref);
   }
 
-
-
-  async function check(ticketRef){
-
+  async function check(r){
     try{
+      const out=await runTransaction(
+        db,
+        async tx=>{
+          const s=await tx.get(r);
 
-      const out=
-        await runTransaction(
-
-          db,
-
-          async transaction=>{
-
-            const ticketSnapshot=
-              await transaction.get(
-                ticketRef
-              );
-
-
-            if(
-              !ticketSnapshot.exists()
-            ){
-
-              return{
-                c:'bad'
-              };
-            }
-
-
-            const data=
-              ticketSnapshot.data();
-
-
-            if(
-              data.blocked
-            ){
-
-              return{
-                c:'blocked',
-                d:data
-              };
-            }
-
-
-            if(
-              data.status==='used'
-            ){
-
-              return{
-                c:'used',
-                d:data
-              };
-            }
-
-
-            transaction.update(
-
-              ticketRef,
-
-              {
-                status:'used',
-                scannedAt:serverTimestamp(),
-                scannedBy:user.uid
-              }
-
-            );
-
-
-            transaction.set(
-
-              doc(
-                collection(
-                  db,
-                  'rc_event_scans'
-                )
-              ),
-
-              {
-                ticketNumber:data.ticketNumber,
-                ticketId:ticketRef.id,
-                scannerId:user.uid,
-                scannedAt:serverTimestamp(),
-                result:'accepted'
-              }
-
-            );
-
-
-            return{
-              c:'ok',
-              d:data
-            };
-
+          if(!s.exists()){
+            return{c:'bad'};
           }
 
-        );
+          const d=s.data();
 
+          if(d.blocked){
+            return{
+              c:'blocked',
+              d
+            };
+          }
 
-      if(
+          if(d.status==='used'){
+            return{
+              c:'used',
+              d
+            };
+          }
+
+          tx.update(
+            r,
+            {
+              status:'used',
+              scannedAt:serverTimestamp(),
+              scannedBy:user.uid
+            }
+          );
+
+          tx.set(
+            doc(collection(db,'rc_event_scans')),
+            {
+              ticketNumber:d.ticketNumber,
+              ticketId:r.id,
+              scannerId:user.uid,
+              scannedAt:serverTimestamp(),
+              result:'accepted'
+            }
+          );
+
+          return{
+            c:'ok',
+            d
+          };
+        }
+      );
+
+      setResult(
         out.c==='ok'
-      ){
+          ?{
+            type:'ok',
+            title:'TOEGANG GOEDGEKEURD',
+            msg:out.d.ticketNumber
+          }
+          :out.c==='used'
+          ?{
+            type:'warn',
+            title:'REEDS GEBRUIKT',
+            msg:out.d.ticketNumber
+          }
+          :out.c==='blocked'
+          ?{
+            type:'bad',
+            title:'TICKET GEBLOKKEERD',
+            msg:out.d.ticketNumber
+          }
+          :{
+            type:'bad',
+            title:'ONGELDIG',
+            msg:'Niet gevonden'
+          }
+      );
 
-        setResult({
-          type:'ok',
-          title:'TOEGANG GOEDGEKEURD',
-          msg:out.d.ticketNumber
-        });
-
-      }else if(
-        out.c==='used'
-      ){
-
-        setResult({
-          type:'warn',
-          title:'REEDS GEBRUIKT',
-          msg:out.d.ticketNumber
-        });
-
-      }else if(
-        out.c==='blocked'
-      ){
-
-        setResult({
-          type:'bad',
-          title:'TICKET GEBLOKKEERD',
-          msg:out.d.ticketNumber
-        });
-
-      }else{
-
-        setResult({
-          type:'bad',
-          title:'ONGELDIG',
-          msg:'Niet gevonden'
-        });
-
-      }
-
-
-    }catch(error){
-
-      console.error(error);
-
+    }catch{
       setResult({
         type:'bad',
         title:'SCAN MISLUKT',
         msg:'Controleer internet en regels.'
       });
-
     }
   }
 
-
-
   async function manualGo(){
+    const v=manual.trim().toUpperCase();
 
-    const value=
-      manual
-      .trim()
-      .toUpperCase();
-
-
-    if(value){
-
+    if(v){
       await check(
-
-        doc(
-          db,
-          'rc_event_tickets',
-          value
-        )
-
+        doc(db,'rc_event_tickets',v)
       );
     }
-
 
     setManual('');
   }
 
-
-
   return(
-
     <div className="scanpage">
-
-
       <header>
-
         <div>
-
-          <small>
-            RAMONA & CLAUDIO
-          </small>
-
-          <h1>
-            Gate Scanner
-          </h1>
-
+          <small>RAMONA & CLAUDIO</small>
+          <h1>Gate Scanner</h1>
         </div>
-
 
         <button
           className="ghost dark"
-          onClick={
-            ()=>signOut(auth)
-          }
+          onClick={()=>signOut(auth)}
         >
           Uitloggen
         </button>
-
       </header>
 
-
-
       <main className="scanmain">
-
-
-        {
-          result
+        {result
           ?(
-
-            <div
-              className={
-                `result ${result.type}`
-              }
-            >
-
+            <div className={`result ${result.type}`}>
               <div>
-
-                {
-                  result.type==='ok'
-                    ?'✓'
-                    :result.type==='warn'
-                    ?'!'
-                    :'×'
-                }
-
+                {result.type==='ok'
+                  ?'✓'
+                  :result.type==='warn'
+                  ?'!'
+                  :'×'}
               </div>
 
-
-              <h2>
-                {result.title}
-              </h2>
-
-
-              <p>
-                {result.msg}
-              </p>
-
+              <h2>{result.title}</h2>
+              <p>{result.msg}</p>
 
               <button
                 className="btn light"
-                onClick={
-                  ()=>setResult(null)
-                }
+                onClick={()=>setResult(null)}
               >
                 Volgende ticket
               </button>
-
-
             </div>
-
           )
           :(
-
             <>
-
               <section className="scanner">
-
-
                 <div id="qr-reader"></div>
 
-
-                {
-                  !active
-                  &&
+                {!active&&
                   <div className="placeholder">
-
-                    <h2>
-                      Scan ticket
-                    </h2>
+                    <h2>Scan ticket</h2>
 
                     <p>
                       Open de camera en richt op de QR-code.
@@ -1272,30 +605,17 @@ function Scanner({user}){
                     >
                       Camera openen
                     </button>
-
                   </div>
                 }
-
               </section>
 
-
-
               <section className="manual">
-
-                <h3>
-                  Handmatige controle
-                </h3>
-
+                <h3>Handmatige controle</h3>
 
                 <div>
-
                   <input
                     value={manual}
-                    onChange={
-                      e=>setManual(
-                        e.target.value
-                      )
-                    }
+                    onChange={e=>setManual(e.target.value)}
                     placeholder="RC-0001"
                   />
 
@@ -1305,62 +625,36 @@ function Scanner({user}){
                   >
                     Controleer
                   </button>
-
                 </div>
-
-
               </section>
-
             </>
-
           )
         }
-
-
       </main>
-
     </div>
   );
 }
-
-
 
 function Stat({n,t}){
-
   return(
-
     <div className="stat">
-
-      <strong>
-        {n}
-      </strong>
-
-      <span>
-        {t}
-      </span>
-
+      <strong>{n}</strong>
+      <span>{t}</span>
     </div>
   );
 }
 
-
-
 function Status({t}){
-
   return(
-
     <span
-      className={
-        `status ${
-          t.blocked
-            ?'blocked'
-            :t.status==='used'
-            ?'used'
-            :'unused'
-        }`
-      }
+      className={`status ${
+        t.blocked
+          ?'blocked'
+          :t.status==='used'
+          ?'used'
+          :'unused'
+      }`}
     >
-
       {
         t.blocked
           ?'Geblokkeerd'
@@ -1368,458 +662,328 @@ function Status({t}){
           ?'Binnen'
           :'Ongebruikt'
       }
-
     </span>
   );
 }
 
-
-
 function Splash(){
-
   return(
-
     <div className="center">
       Laden...
     </div>
   );
 }
 
-
-
 function Center({children}){
-
   return(
-
     <div className="center">
-
       <div className="panel">
         {children}
       </div>
-
     </div>
   );
 }
 
-
-
 function makeToken(){
-
   return(
-    crypto
-    .randomUUID()
-    .replaceAll('-','')
+    crypto.randomUUID().replaceAll('-','')
     +
-    crypto
-    .randomUUID()
-    .replaceAll('-','')
+    crypto.randomUUID().replaceAll('-','')
   );
 }
 
+function payload(t){
+  return `RC-EVENT|${t.ticketNumber}|${t.token}`;
+}
 
-
-function payload(ticket){
+function parse(x){
+  const p=String(x).split('|');
 
   return(
-    `RC-EVENT|${ticket.ticketNumber}|${ticket.token}`
-  );
-}
-
-
-
-function parse(value){
-
-  const parts=
-    String(value)
-    .split('|');
-
-
-  if(
-    parts.length===3
+    p.length===3
     &&
-    parts[0]==='RC-EVENT'
-  ){
-
-    return{
-      ticketNumber:parts[1],
-      token:parts[2]
-    };
-  }
-
-
-  return null;
+    p[0]==='RC-EVENT'
+  )
+    ?{
+      ticketNumber:p[1],
+      token:p[2]
+    }
+    :null;
 }
 
 
+// =========================
+// CODE-GENERATED LUXURY TICKET
+// =========================
 
-// ========================================
-// PDF TICKET
-// ========================================
+const PDF_W=210;
+const PDF_H=105;
+let coupleImageCache=undefined;
 
-const PAGE_W=210;
-const PAGE_H=114.6;
+async function getOptionalCoupleImage(){
+  if(coupleImageCache!==undefined)return coupleImageCache;
 
-let ticketTemplateCache=null;
+  try{
+    const response=await fetch('/couple.png');
+    if(!response.ok){
+      coupleImageCache=null;
+      return null;
+    }
 
+    const blob=await response.blob();
+    coupleImageCache=await new Promise((resolve,reject)=>{
+      const reader=new FileReader();
+      reader.onload=()=>resolve(reader.result);
+      reader.onerror=reject;
+      reader.readAsDataURL(blob);
+    });
 
-
-async function getTicketTemplate(){
-
-  if(
-    ticketTemplateCache
-  ){
-
-    return ticketTemplateCache;
+    return coupleImageCache;
+  }catch{
+    coupleImageCache=null;
+    return null;
   }
-
-
-  const response=
-    await fetch(
-      '/ticket-template.png'
-    );
-
-
-  if(
-    !response.ok
-  ){
-
-    throw new Error(
-      'public/ticket-template.png niet gevonden.'
-    );
-  }
-
-
-  const blob=
-    await response.blob();
-
-
-  ticketTemplateCache=
-    await new Promise(
-
-      (
-        resolve,
-        reject
-      )=>{
-
-        const reader=
-          new FileReader();
-
-
-        reader.onload=
-          ()=>resolve(
-            reader.result
-          );
-
-
-        reader.onerror=
-          reject;
-
-
-        reader.readAsDataURL(
-          blob
-        );
-
-      }
-
-    );
-
-
-  return ticketTemplateCache;
 }
-
-
 
 async function ticketPdf(ticket,settings){
-
   try{
+    const pdf=new jsPDF({
+      orientation:'landscape',
+      unit:'mm',
+      format:[PDF_W,PDF_H]
+    });
 
-    const pdf=
-      new jsPDF({
-        orientation:'landscape',
-        unit:'mm',
-        format:[
-          PAGE_W,
-          PAGE_H
-        ]
-      });
-
-
-    await drawTicket(
-      pdf,
-      ticket,
-      settings
-    );
-
-
-    pdf.save(
-      `${ticket.ticketNumber}.pdf`
-    );
-
-
+    await drawLuxuryTicket(pdf,ticket,settings);
+    pdf.save(`${ticket.ticketNumber}.pdf`);
   }catch(error){
-
     console.error(error);
-
-    alert(
-      'De ticket PDF kon niet worden gemaakt.'
-    );
-
+    alert('De ticket PDF kon niet worden gemaakt.');
   }
 }
-
-
 
 async function batchPdf(tickets,settings){
-
-  if(
-    !tickets.length
-  ){
-    return;
-  }
-
+  if(!tickets.length)return;
 
   try{
+    const pdf=new jsPDF({
+      orientation:'landscape',
+      unit:'mm',
+      format:[PDF_W,PDF_H]
+    });
 
-    const pdf=
-      new jsPDF({
-        orientation:'landscape',
-        unit:'mm',
-        format:[
-          PAGE_W,
-          PAGE_H
-        ]
-      });
-
-
-    for(
-      let i=0;
-      i<tickets.length;
-      i++
-    ){
-
+    for(let i=0;i<tickets.length;i++){
       if(i>0){
-
-        pdf.addPage(
-          [
-            PAGE_W,
-            PAGE_H
-          ],
-          'landscape'
-        );
-
+        pdf.addPage([PDF_W,PDF_H],'landscape');
       }
 
-
-      await drawTicket(
-        pdf,
-        tickets[i],
-        settings
-      );
+      await drawLuxuryTicket(pdf,tickets[i],settings);
     }
 
-
-    pdf.save(
-      'Ramona-Claudio-Tickets.pdf'
-    );
-
-
+    pdf.save('Ramona-Claudio-Tickets.pdf');
   }catch(error){
-
     console.error(error);
-
-    alert(
-      'De tickets konden niet als PDF worden gemaakt.'
-    );
-
+    alert('De tickets konden niet als PDF worden gemaakt.');
   }
 }
 
+async function drawLuxuryTicket(pdf,ticket,settings){
+  const blush=[248,231,228];
+  const blush2=[255,247,244];
+  const rose=[178,112,102];
+  const gold=[181,136,58];
+  const gold2=[229,202,146];
+  const black=[22,18,17];
+  const ink=[47,37,33];
 
+  // Base
+  pdf.setFillColor(...blush2);
+  pdf.rect(0,0,PDF_W,PDF_H,'F');
 
-async function drawTicket(pdf,ticket,settings){
+  // Ticket body
+  pdf.setFillColor(235,226,221);
+  pdf.roundedRect(5.5,7,199,91.5,3,3,'F');
+  pdf.setFillColor(...blush);
+  pdf.roundedRect(4,5.5,199,91.5,3,3,'F');
 
-  const gold=[
-    181,
-    136,
-    58
-  ];
+  // Black luxury corners
+  pdf.setFillColor(...black);
+  pdf.triangle(4,5.5,51,5.5,4,35,'F');
+  pdf.triangle(4,97,55,97,4,69,'F');
 
+  // Gold framing
+  pdf.setDrawColor(...gold);
+  pdf.setLineWidth(.5);
+  pdf.roundedRect(7,8.5,193,85.5,2,2);
+  pdf.setDrawColor(...gold2);
+  pdf.setLineWidth(.2);
+  pdf.roundedRect(9,10.5,189,81.5,1.7,1.7);
 
-  const dark=[
-    24,
-    20,
-    19
-  ];
+  // Stub divider
+  pdf.setDrawColor(...rose);
+  pdf.setLineDashPattern([1.5,1.5],0);
+  pdf.line(153,8.5,153,94);
+  pdf.setLineDashPattern([],0);
 
+  // Decorative sparkles
+  drawSpark(pdf,18,16,gold);
+  drawSpark(pdf,25,13,gold2);
+  drawSpark(pdf,143,17,gold);
+  drawSpark(pdf,146,77,gold2);
 
-  const paper=[
-    252,
-    246,
-    242
-  ];
+  // Florals
+  drawFlower(pdf,20,82,11,[222,162,155],gold);
+  drawFlower(pdf,31,89,7,[239,192,185],gold);
 
+  // Optional couple image. Upload public/couple.png later.
+  const couple=await getOptionalCoupleImage();
+  if(couple){
+    try{
+      pdf.addImage(couple,'PNG',10,16,39,61,undefined,'FAST');
+    }catch(error){
+      console.warn('couple.png kon niet worden getekend',error);
+    }
+  }
 
-  // Template
-  const background=
-    await getTicketTemplate();
+  // Main title
+  pdf.setTextColor(...gold);
+  pdf.setFont('times','italic');
+  pdf.setFontSize(25);
+  pdf.text('Uitnodiging',94,22,{align:'center'});
 
+  // Flourish
+  pdf.setDrawColor(...gold);
+  pdf.setLineWidth(.3);
+  pdf.line(78,26,89,26);
+  pdf.line(99,26,110,26);
+  pdf.circle(94,26,.8);
 
-  pdf.addImage(
-    background,
-    'PNG',
-    0,
-    0,
-    PAGE_W,
-    PAGE_H
-  );
+  // Names
+  pdf.setTextColor(...black);
+  pdf.setFont('times','bold');
+  pdf.setFontSize(22);
+  pdf.text(settings.names||EVENT.names,94,37,{align:'center'});
 
+  // Subtitle
+  pdf.setTextColor(...rose);
+  pdf.setFont('helvetica','bold');
+  pdf.setFontSize(8.4);
+  pdf.text('43 & 45 CELEBRATION',94,44,{align:'center'});
 
-  // ========================================
-  // QR CODE
-  // ========================================
+  // Event details row
+  drawInfoBlock(pdf,62,58,'DATUM','18 SEPTEMBER','2026',gold,ink);
+  drawInfoBlock(pdf,85,58,'TIJD','INLOOP VANAF','19.00 U',gold,ink);
+  drawInfoBlock(pdf,109,58,'LOCATIE',settings.location||EVENT.location,'',gold,ink);
+  drawInfoBlock(pdf,133,58,'DRESSCODE',settings.dresscode||EVENT.dresscode,'',gold,ink);
 
-  const qr=
-    await QRCode.toDataURL(
+  // Optional guest name
+  if(ticket.guestName){
+    pdf.setTextColor(...ink);
+    pdf.setFont('helvetica','bold');
+    pdf.setFontSize(8.2);
+    pdf.text(ticket.guestName,94,76,{align:'center'});
+  }
 
-      payload(ticket),
+  // Standard ticket plaque
+  pdf.setFillColor(...black);
+  pdf.roundedRect(67,81.5,55,10,2,2,'F');
+  pdf.setDrawColor(...gold);
+  pdf.setLineWidth(.45);
+  pdf.roundedRect(68,82.5,53,8,1.5,1.5);
+  pdf.setTextColor(...gold2);
+  pdf.setFont('times','bold');
+  pdf.setFontSize(10);
+  pdf.text('STANDARD TICKET',94.5,88.7,{align:'center'});
 
-      {
-        errorCorrectionLevel:'H',
-        margin:1,
-        width:800,
-        color:{
-          dark:'#000000',
-          light:'#FFFFFF'
-        }
-      }
+  // Right stub
+  pdf.setFillColor(250,232,228);
+  pdf.roundedRect(156,10,40,82,2,2,'F');
+  pdf.setDrawColor(...gold);
+  pdf.setLineWidth(.4);
+  pdf.roundedRect(157.5,11.5,37,79,2,2);
 
-    );
+  pdf.setTextColor(...rose);
+  pdf.setFont('helvetica','bold');
+  pdf.setFontSize(7);
+  pdf.text('SCAN FOR ENTRY',176,20,{align:'center'});
 
+  // QR frame
+  pdf.setFillColor(255,255,255);
+  pdf.setDrawColor(...gold);
+  pdf.setLineWidth(.6);
+  pdf.roundedRect(161,25,30,30,2,2,'FD');
 
-  // Licht vlak achter QR
-  pdf.setFillColor(
-    ...paper
-  );
-
-
-  pdf.roundedRect(
-    157.0,
-    34.5,
-    31.0,
-    31.0,
-    2,
-    2,
-    'F'
-  );
-
-
-  // Echte QR
-  pdf.addImage(
-    qr,
-    'PNG',
-    158.0,
-    35.5,
-    29.0,
-    29.0
-  );
-
-
-  // ========================================
-  // TICKETNUMMER
-  // ========================================
-
-  // Klein zwart vlak in het lege ticketnummergebied
-  pdf.setFillColor(
-    ...dark
-  );
-
-
-  pdf.roundedRect(
-    158.0,
-    91.0,
-    28.5,
-    8.5,
-    1.8,
-    1.8,
-    'F'
-  );
-
-
-  pdf.setTextColor(
-    ...gold
-  );
-
-
-  pdf.setFont(
-    'helvetica',
-    'bold'
-  );
-
-
-  pdf.setFontSize(
-    9.5
-  );
-
-
-  pdf.text(
-    ticket.ticketNumber,
-    172.25,
-    96.6,
+  const qr=await QRCode.toDataURL(
+    payload(ticket),
     {
-      align:'center'
+      errorCorrectionLevel:'H',
+      margin:1,
+      width:800,
+      color:{dark:'#000000',light:'#FFFFFF'}
     }
   );
 
+  pdf.addImage(qr,'PNG',163,27,26,26);
 
-  // ========================================
-  // GASTNAAM - ALLEEN ALS INGEVULD
-  // ========================================
+  // One-time entry
+  pdf.setTextColor(...rose);
+  pdf.setFont('helvetica','bold');
+  pdf.setFontSize(6.2);
+  pdf.text('ONE-TIME ENTRY',176,63,{align:'center'});
+  pdf.setDrawColor(...gold);
+  pdf.line(166,66,172,66);
+  pdf.line(180,66,186,66);
+  pdf.circle(176,66,.8);
 
-  if(
-    ticket.guestName
-  ){
+  // Ticket number plaque
+  pdf.setFillColor(...black);
+  pdf.roundedRect(161,72,30,17,2,2,'F');
+  pdf.setDrawColor(...gold);
+  pdf.setLineWidth(.45);
+  pdf.roundedRect(162,73,28,15,1.5,1.5);
+  pdf.setTextColor(...gold2);
+  pdf.setFont('helvetica','bold');
+  pdf.setFontSize(5.7);
+  pdf.text('TICKET NO.',176,78,{align:'center'});
+  pdf.setFontSize(12);
+  pdf.text(ticket.ticketNumber,176,85,{align:'center'});
+}
 
-    pdf.setFillColor(
-      ...paper
-    );
+function drawInfoBlock(pdf,x,y,label,line1,line2,gold,ink){
+  pdf.setTextColor(...gold);
+  pdf.setFont('helvetica','bold');
+  pdf.setFontSize(5.7);
+  pdf.text(label,x,y,{align:'center'});
 
+  pdf.setTextColor(...ink);
+  pdf.setFont('helvetica','bold');
+  pdf.setFontSize(5.6);
+  pdf.text(line1,x,y+5,{align:'center'});
 
-    pdf.roundedRect(
-      62.5,
-      80.0,
-      50.0,
-      8.2,
-      1.5,
-      1.5,
-      'F'
-    );
+  if(line2){
+    pdf.setFont('helvetica','normal');
+    pdf.setFontSize(5.3);
+    pdf.text(line2,x,y+9,{align:'center'});
+  }
+}
 
+function drawSpark(pdf,x,y,gold){
+  pdf.setDrawColor(...gold);
+  pdf.setLineWidth(.35);
+  pdf.line(x-2,y,x+2,y);
+  pdf.line(x,y-2,x,y+2);
+  pdf.circle(x,y,.55);
+}
 
-    pdf.setTextColor(
-      ...dark
-    );
+function drawFlower(pdf,x,y,r,rose,gold){
+  pdf.setFillColor(...rose);
 
-
-    pdf.setFont(
-      'helvetica',
-      'bold'
-    );
-
-
-    pdf.setFontSize(
-      7.5
-    );
-
-
-    pdf.text(
-      ticket.guestName,
-      87.5,
-      85.3,
-      {
-        align:'center'
-      }
-    );
-
+  for(let i=0;i<8;i++){
+    const a=(Math.PI*2/8)*i;
+    const px=x+Math.cos(a)*(r*.45);
+    const py=y+Math.sin(a)*(r*.45);
+    pdf.ellipse(px,py,r*.34,r*.18,'F');
   }
 
+  pdf.setFillColor(...gold);
+  pdf.circle(x,y,r*.17,'F');
 }
