@@ -1,29 +1,12 @@
 import React, { useEffect, useRef, useState } from 'react';
 import {
-  collection,
-  deleteDoc,
-  doc,
-  getDoc,
-  getDocs,
-  limit,
-  onSnapshot,
-  orderBy,
-  query,
-  runTransaction,
-  serverTimestamp,
-  setDoc,
-  updateDoc,
-  where
+  collection, deleteDoc, doc, getDoc, getDocs, limit, onSnapshot,
+  orderBy, query, runTransaction, serverTimestamp, setDoc, updateDoc, where
 } from 'firebase/firestore';
-import {
-  onAuthStateChanged,
-  signInWithEmailAndPassword,
-  signOut
-} from 'firebase/auth';
+import { onAuthStateChanged, signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import { Html5Qrcode } from 'html5-qrcode';
 import QRCode from 'qrcode';
 import { jsPDF } from 'jspdf';
-
 import { auth, db } from './firebase';
 
 const EVENT = {
@@ -44,17 +27,19 @@ export default function App() {
   const [role, setRole] = useState(null);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, async (firebaseUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
       setUser(firebaseUser || null);
       setRole(null);
-
       if (!firebaseUser) return;
-
-      const roleSnap = await getDoc(doc(db, 'rc_users', firebaseUser.uid));
-      setRole(roleSnap.exists() ? roleSnap.data().role : null);
+      try {
+        const roleSnapshot = await getDoc(doc(db, 'rc_users', firebaseUser.uid));
+        setRole(roleSnapshot.exists() ? roleSnapshot.data().role : null);
+      } catch (error) {
+        console.error('Rol ophalen mislukt:', error);
+        setRole(null);
+      }
     });
-
-    return unsub;
+    return unsubscribe;
   }, []);
 
   if (user === undefined) return <Splash />;
@@ -71,12 +56,7 @@ export default function App() {
   }
 
   const scannerRoute = window.location.pathname.toLowerCase().startsWith('/scanner');
-
-  if (role === 'scanner' || scannerRoute) {
-    return <Scanner user={user} />;
-  }
-
-  return <Admin />;
+  return role === 'scanner' || scannerRoute ? <Scanner user={user} /> : <Admin />;
 }
 
 function Login() {
@@ -86,13 +66,12 @@ function Login() {
 
   async function handleSubmit(event) {
     event.preventDefault();
-
     try {
       setError('');
       await signInWithEmailAndPassword(auth, email.trim(), password);
     } catch (err) {
       console.error(err);
-      setError('Inloggen is niet gelukt.');
+      setError('Inloggen is niet gelukt. Controleer e-mailadres en wachtwoord.');
     }
   }
 
@@ -102,25 +81,11 @@ function Login() {
         <small>RAMONA & CLAUDIO</small>
         <h1>Event Ticketing</h1>
         <p>Beheer en poortscanner</p>
-
         <label>E-mailadres</label>
-        <input
-          type="email"
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          required
-        />
-
+        <input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
         <label>Wachtwoord</label>
-        <input
-          type="password"
-          value={password}
-          onChange={(event) => setPassword(event.target.value)}
-          required
-        />
-
+        <input type="password" value={password} onChange={(event) => setPassword(event.target.value)} required />
         {error && <div className="alert">{error}</div>}
-
         <button className="btn full" type="submit">Inloggen</button>
       </form>
     </div>
@@ -135,36 +100,33 @@ function Admin() {
   const [message, setMessage] = useState('');
 
   useEffect(() => {
-    const ticketsUnsub = onSnapshot(
+    const unsubscribeTickets = onSnapshot(
       query(collection(db, 'rc_event_tickets'), orderBy('ticketNumber')),
-      (snapshot) => {
-        setTickets(snapshot.docs.map((item) => ({ id: item.id, ...item.data() })));
-      }
+      (snapshot) => setTickets(snapshot.docs.map((ticketDoc) => ({ id: ticketDoc.id, ...ticketDoc.data() }))),
+      (error) => console.error('Tickets ophalen mislukt:', error)
     );
 
-    const settingsUnsub = onSnapshot(
+    const unsubscribeSettings = onSnapshot(
       doc(db, 'rc_event_settings', EVENT.id),
       (snapshot) => {
-        if (snapshot.exists()) {
-          setSettings((current) => ({ ...current, ...snapshot.data() }));
-        }
-      }
+        if (snapshot.exists()) setSettings((current) => ({ ...current, ...snapshot.data() }));
+      },
+      (error) => console.error('Event instellingen ophalen mislukt:', error)
     );
 
     return () => {
-      ticketsUnsub();
-      settingsUnsub();
+      unsubscribeTickets();
+      unsubscribeSettings();
     };
   }, []);
 
-  const used = tickets.filter((t) => t.status === 'used').length;
-  const blocked = tickets.filter((t) => t.blocked === true).length;
-  const unused = tickets.filter((t) => t.status !== 'used' && !t.blocked).length;
+  const used = tickets.filter((ticket) => ticket.status === 'used').length;
+  const blocked = tickets.filter((ticket) => ticket.blocked === true).length;
+  const unused = tickets.filter((ticket) => ticket.status !== 'used' && !ticket.blocked).length;
 
   async function generateTickets() {
     try {
       setMessage('');
-
       const quantity = Math.max(1, Math.min(Number(count) || 1, 50));
       const maximum = Number(settings.maxTickets || EVENT.maxTickets);
 
@@ -173,17 +135,14 @@ function Admin() {
         return;
       }
 
-      const existing = new Set(tickets.map((t) => t.ticketNumber));
-      let made = 0;
+      const existingNumbers = new Set(tickets.map((ticket) => ticket.ticketNumber));
+      let generated = 0;
       let sequence = 1;
 
-      while (made < quantity) {
-        const ticketNumber =
-          `${settings.ticketPrefix || EVENT.ticketPrefix}-${String(sequence).padStart(4, '0')}`;
-
+      while (generated < quantity) {
+        const ticketNumber = `${settings.ticketPrefix || EVENT.ticketPrefix}-${String(sequence).padStart(4, '0')}`;
         sequence += 1;
-
-        if (existing.has(ticketNumber)) continue;
+        if (existingNumbers.has(ticketNumber)) continue;
 
         await setDoc(doc(db, 'rc_event_tickets', ticketNumber), {
           ticketNumber,
@@ -198,28 +157,35 @@ function Admin() {
           ticketType: 'standard'
         });
 
-        existing.add(ticketNumber);
-        made += 1;
+        existingNumbers.add(ticketNumber);
+        generated += 1;
       }
 
       setGuestName('');
       setMessage(`${quantity} ticket${quantity === 1 ? '' : 's'} succesvol gegenereerd.`);
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(error);
       setMessage('Tickets konden niet worden gegenereerd.');
     }
   }
 
   async function removeTicket(ticket) {
     if (!window.confirm(`${ticket.ticketNumber} verwijderen?`)) return;
-
-    await deleteDoc(doc(db, 'rc_event_tickets', ticket.id));
+    try {
+      await deleteDoc(doc(db, 'rc_event_tickets', ticket.id));
+    } catch (error) {
+      console.error(error);
+      window.alert('Ticket kon niet worden verwijderd.');
+    }
   }
 
   async function toggleBlock(ticket) {
-    await updateDoc(doc(db, 'rc_event_tickets', ticket.id), {
-      blocked: !ticket.blocked
-    });
+    try {
+      await updateDoc(doc(db, 'rc_event_tickets', ticket.id), { blocked: !ticket.blocked });
+    } catch (error) {
+      console.error(error);
+      window.alert('Ticketstatus kon niet worden aangepast.');
+    }
   }
 
   return (
@@ -229,7 +195,6 @@ function Admin() {
           <small>UITNODIGING</small>
           <h1>{settings.names || EVENT.names}</h1>
         </div>
-
         <button className="ghost" onClick={() => signOut(auth)}>Uitloggen</button>
       </header>
 
@@ -241,7 +206,6 @@ function Admin() {
             <p>{settings.date || EVENT.date} · {settings.time || EVENT.time}</p>
             <p>{settings.location || EVENT.location} · Dresscode: {settings.dresscode || EVENT.dresscode}</p>
           </div>
-
           <span>ONE-TIME ENTRY</span>
         </section>
 
@@ -254,38 +218,20 @@ function Admin() {
 
         <section className="panel">
           <h3>Tickets genereren</h3>
-
           <div className="formrow">
             <div>
               <label>Aantal</label>
-              <input
-                type="number"
-                min="1"
-                max="50"
-                value={count}
-                onChange={(event) => setCount(event.target.value)}
-              />
+              <input type="number" min="1" max="50" value={count} onChange={(event) => setCount(event.target.value)} />
             </div>
-
             <div>
               <label>Naam (optioneel bij 1 ticket)</label>
-              <input
-                value={guestName}
-                onChange={(event) => setGuestName(event.target.value)}
-                placeholder="Bijv. Familie Jansen"
-              />
+              <input value={guestName} onChange={(event) => setGuestName(event.target.value)} placeholder="Bijv. Familie Jansen" />
             </div>
-
             <button className="btn" onClick={generateTickets}>Genereer</button>
-
-            <button
-              className="btn soft"
-              onClick={() => batchPdf(tickets.filter((t) => !t.blocked), settings)}
-            >
+            <button className="btn soft" onClick={() => batchPdf(tickets.filter((ticket) => !ticket.blocked), settings)}>
               Alle PDF's
             </button>
           </div>
-
           {message && <div className="alert">{message}</div>}
         </section>
 
@@ -295,7 +241,6 @@ function Admin() {
               <h3>Tickets</h3>
               <p>Limiet: {settings.maxTickets || EVENT.maxTickets}</p>
             </div>
-
             <a className="btn" href="/scanner">Open scanner</a>
           </div>
 
@@ -305,17 +250,10 @@ function Admin() {
                 <strong>{ticket.ticketNumber}</strong>
                 <TicketStatus ticket={ticket} />
                 <span>{ticket.guestName || '—'}</span>
-
                 <div className="actions">
                   <button onClick={() => ticketPdf(ticket, settings)}>PDF</button>
-
-                  <button onClick={() => toggleBlock(ticket)}>
-                    {ticket.blocked ? 'Deblokkeer' : 'Blokkeer'}
-                  </button>
-
-                  <button className="danger" onClick={() => removeTicket(ticket)}>
-                    Verwijder
-                  </button>
+                  <button onClick={() => toggleBlock(ticket)}>{ticket.blocked ? 'Deblokkeer' : 'Blokkeer'}</button>
+                  <button className="danger" onClick={() => removeTicket(ticket)}>Verwijder</button>
                 </div>
               </div>
             ))}
@@ -332,15 +270,10 @@ function Scanner({ user }) {
   const [cameraActive, setCameraActive] = useState(false);
   const scannerRef = useRef(null);
 
-  useEffect(() => {
-    return () => {
-      stopCamera();
-    };
-  }, []);
+  useEffect(() => () => { stopCamera(); }, []);
 
   async function startCamera() {
     setResult(null);
-
     try {
       const scanner = new Html5Qrcode('qr-reader');
       scannerRef.current = scanner;
@@ -348,92 +281,61 @@ function Scanner({ user }) {
 
       await scanner.start(
         { facingMode: 'environment' },
-        {
-          fps: 10,
-          qrbox: { width: 260, height: 260 }
-        },
+        { fps: 10, qrbox: { width: 260, height: 260 } },
         async (decodedText) => {
           await stopCamera();
           await processQr(decodedText);
         },
         () => {}
       );
-    } catch (err) {
-      console.error(err);
+    } catch (error) {
+      console.error(error);
       setCameraActive(false);
-      setResult({
-        type: 'bad',
-        title: 'Camera niet beschikbaar',
-        message: 'Controleer camera-toestemming.'
-      });
+      setResult({ type: 'bad', title: 'Camera niet beschikbaar', message: 'Controleer camera-toestemming.' });
     }
   }
 
   async function stopCamera() {
     if (!scannerRef.current) return;
-
     try {
-      if (scannerRef.current.isScanning) {
-        await scannerRef.current.stop();
-      }
-
+      if (scannerRef.current.isScanning) await scannerRef.current.stop();
       await scannerRef.current.clear();
     } catch {}
-
     scannerRef.current = null;
     setCameraActive(false);
   }
 
   async function processQr(raw) {
     const parsed = parseTicketPayload(raw);
-
     if (!parsed) {
-      setResult({
-        type: 'bad',
-        title: 'ONGELDIGE QR',
-        message: 'Deze QR hoort niet bij dit event.'
-      });
+      setResult({ type: 'bad', title: 'ONGELDIGE QR', message: 'Deze QR hoort niet bij dit event.' });
       return;
     }
 
-    const snapshot = await getDocs(
-      query(
-        collection(db, 'rc_event_tickets'),
-        where('token', '==', parsed.token),
-        limit(1)
-      )
-    );
-
-    if (snapshot.empty) {
-      setResult({
-        type: 'bad',
-        title: 'ONGELDIG',
-        message: 'Ticket niet gevonden.'
-      });
-      return;
+    try {
+      const snapshot = await getDocs(
+        query(collection(db, 'rc_event_tickets'), where('token', '==', parsed.token), limit(1))
+      );
+      if (snapshot.empty) {
+        setResult({ type: 'bad', title: 'ONGELDIG', message: 'Ticket niet gevonden.' });
+        return;
+      }
+      await validateTicket(snapshot.docs[0].ref);
+    } catch (error) {
+      console.error(error);
+      setResult({ type: 'bad', title: 'SCAN MISLUKT', message: 'Ticket kon niet worden gecontroleerd.' });
     }
-
-    await validateTicket(snapshot.docs[0].ref);
   }
 
   async function validateTicket(ticketRef) {
     try {
       const outcome = await runTransaction(db, async (transaction) => {
         const snapshot = await transaction.get(ticketRef);
-
-        if (!snapshot.exists()) {
-          return { code: 'invalid' };
-        }
+        if (!snapshot.exists()) return { code: 'invalid' };
 
         const data = snapshot.data();
-
-        if (data.blocked) {
-          return { code: 'blocked', data };
-        }
-
-        if (data.status === 'used') {
-          return { code: 'used', data };
-        }
+        if (data.blocked) return { code: 'blocked', data };
+        if (data.status === 'used') return { code: 'used', data };
 
         transaction.update(ticketRef, {
           status: 'used',
@@ -453,45 +355,23 @@ function Scanner({ user }) {
       });
 
       if (outcome.code === 'accepted') {
-        setResult({
-          type: 'ok',
-          title: 'TOEGANG GOEDGEKEURD',
-          message: outcome.data.ticketNumber
-        });
+        setResult({ type: 'ok', title: 'TOEGANG GOEDGEKEURD', message: outcome.data.ticketNumber });
       } else if (outcome.code === 'used') {
-        setResult({
-          type: 'warn',
-          title: 'REEDS GEBRUIKT',
-          message: outcome.data.ticketNumber
-        });
+        setResult({ type: 'warn', title: 'REEDS GEBRUIKT', message: outcome.data.ticketNumber });
       } else if (outcome.code === 'blocked') {
-        setResult({
-          type: 'bad',
-          title: 'TICKET GEBLOKKEERD',
-          message: outcome.data.ticketNumber
-        });
+        setResult({ type: 'bad', title: 'TICKET GEBLOKKEERD', message: outcome.data.ticketNumber });
       } else {
-        setResult({
-          type: 'bad',
-          title: 'ONGELDIG',
-          message: 'Ticket niet gevonden.'
-        });
+        setResult({ type: 'bad', title: 'ONGELDIG', message: 'Ticket niet gevonden.' });
       }
-    } catch (err) {
-      console.error(err);
-      setResult({
-        type: 'bad',
-        title: 'SCAN MISLUKT',
-        message: 'Controleer internetverbinding en Firebase.'
-      });
+    } catch (error) {
+      console.error(error);
+      setResult({ type: 'bad', title: 'SCAN MISLUKT', message: 'Controleer internetverbinding en Firebase.' });
     }
   }
 
   async function manualCheck() {
     const ticketNumber = manualTicket.trim().toUpperCase();
-
     if (!ticketNumber) return;
-
     await validateTicket(doc(db, 'rc_event_tickets', ticketNumber));
     setManualTicket('');
   }
@@ -503,7 +383,6 @@ function Scanner({ user }) {
           <small>RAMONA & CLAUDIO</small>
           <h1>Gate Scanner</h1>
         </div>
-
         <button className="ghost dark" onClick={() => signOut(auth)}>Uitloggen</button>
       </header>
 
@@ -513,16 +392,12 @@ function Scanner({ user }) {
             <div>{result.type === 'ok' ? '✓' : result.type === 'warn' ? '!' : '×'}</div>
             <h2>{result.title}</h2>
             <p>{result.message}</p>
-
-            <button className="btn light" onClick={() => setResult(null)}>
-              Volgende ticket
-            </button>
+            <button className="btn light" onClick={() => setResult(null)}>Volgende ticket</button>
           </div>
         ) : (
           <>
             <section className="scanner">
               <div id="qr-reader" />
-
               {!cameraActive && (
                 <div className="placeholder">
                   <h2>Scan ticket</h2>
@@ -534,14 +409,8 @@ function Scanner({ user }) {
 
             <section className="manual">
               <h3>Handmatige controle</h3>
-
               <div>
-                <input
-                  value={manualTicket}
-                  onChange={(event) => setManualTicket(event.target.value)}
-                  placeholder="RC-0001"
-                />
-
+                <input value={manualTicket} onChange={(event) => setManualTicket(event.target.value)} placeholder="RC-0001" />
                 <button className="btn" onClick={manualCheck}>Controleer</button>
               </div>
             </section>
@@ -553,18 +422,12 @@ function Scanner({ user }) {
 }
 
 function Stat({ number, title }) {
-  return (
-    <div className="stat">
-      <strong>{number}</strong>
-      <span>{title}</span>
-    </div>
-  );
+  return <div className="stat"><strong>{number}</strong><span>{title}</span></div>;
 }
 
 function TicketStatus({ ticket }) {
   let statusClass = 'unused';
   let text = 'Ongebruikt';
-
   if (ticket.blocked) {
     statusClass = 'blocked';
     text = 'Geblokkeerd';
@@ -572,7 +435,6 @@ function TicketStatus({ ticket }) {
     statusClass = 'used';
     text = 'Binnen';
   }
-
   return <span className={`status ${statusClass}`}>{text}</span>;
 }
 
@@ -581,18 +443,11 @@ function Splash() {
 }
 
 function Center({ children }) {
-  return (
-    <div className="center">
-      <div className="panel">{children}</div>
-    </div>
-  );
+  return <div className="center"><div className="panel">{children}</div></div>;
 }
 
 function createSecureToken() {
-  return (
-    crypto.randomUUID().replaceAll('-', '') +
-    crypto.randomUUID().replaceAll('-', '')
-  );
+  return crypto.randomUUID().replaceAll('-', '') + crypto.randomUUID().replaceAll('-', '');
 }
 
 function createTicketPayload(ticket) {
@@ -601,38 +456,50 @@ function createTicketPayload(ticket) {
 
 function parseTicketPayload(value) {
   const parts = String(value).split('|');
-
   if (parts.length === 3 && parts[0] === 'RC-EVENT') {
-    return {
-      ticketNumber: parts[1],
-      token: parts[2]
-    };
+    return { ticketNumber: parts[1], token: parts[2] };
   }
-
   return null;
 }
 
-
 // ======================================================
-// PDF - LUXURY RAMONA & CLAUDIO TICKET
+// PDF TEMPLATE BACKGROUND
 // ======================================================
 
 const PDF_W = 210;
-const PDF_H = 99;
+const PDF_H = 98.82;
+let templateCache = null;
+
+async function loadTicketTemplate() {
+  if (templateCache) return templateCache;
+
+  const response = await fetch('/ticket-template.png', { cache: 'no-store' });
+  if (!response.ok) {
+    throw new Error('public/ticket-template.png kon niet worden gevonden.');
+  }
+
+  const blob = await response.blob();
+  templateCache = await blobToDataUrl(blob);
+  return templateCache;
+}
+
+function blobToDataUrl(blob) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = reject;
+    reader.readAsDataURL(blob);
+  });
+}
 
 async function ticketPdf(ticket, settings) {
   try {
-    const pdf = new jsPDF({
-      orientation: 'landscape',
-      unit: 'mm',
-      format: [PDF_W, PDF_H]
-    });
-
-    await drawTicket(pdf, ticket, settings);
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [PDF_W, PDF_H] });
+    await drawTemplateTicket(pdf, ticket, settings);
     pdf.save(`${ticket.ticketNumber}.pdf`);
-  } catch (err) {
-    console.error(err);
-    alert('De ticket PDF kon niet worden gemaakt.');
+  } catch (error) {
+    console.error(error);
+    window.alert('De ticket PDF kon niet worden gemaakt. Controleer public/ticket-template.png.');
   }
 }
 
@@ -640,190 +507,79 @@ async function batchPdf(tickets, settings) {
   if (!tickets.length) return;
 
   try {
-    const pdf = new jsPDF({
-      orientation: 'landscape',
-      unit: 'mm',
-      format: [PDF_W, PDF_H]
-    });
+    const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: [PDF_W, PDF_H] });
 
     for (let i = 0; i < tickets.length; i += 1) {
-      if (i > 0) {
-        pdf.addPage([PDF_W, PDF_H], 'landscape');
-      }
-
-      await drawTicket(pdf, tickets[i], settings);
+      if (i > 0) pdf.addPage([PDF_W, PDF_H], 'landscape');
+      await drawTemplateTicket(pdf, tickets[i], settings);
     }
 
     pdf.save('Ramona-Claudio-Tickets.pdf');
-  } catch (err) {
-    console.error(err);
-    alert('De tickets konden niet worden gemaakt.');
+  } catch (error) {
+    console.error(error);
+    window.alert('De tickets konden niet als PDF worden gemaakt.');
   }
 }
 
-async function drawTicket(pdf, ticket, settings) {
-  const blush = [249, 232, 228];
-  const blushLight = [255, 248, 245];
-  const rose = [180, 111, 101];
-  const gold = [183, 137, 55];
-  const goldLight = [230, 198, 125];
-  const black = [22, 18, 17];
-  const text = [48, 37, 32];
+async function drawTemplateTicket(pdf, ticket) {
+  const template = await loadTicketTemplate();
 
-  pdf.setFillColor(...blushLight);
-  pdf.rect(0, 0, PDF_W, PDF_H, 'F');
-
-  pdf.setFillColor(...blush);
-  pdf.roundedRect(3, 4, 202, 90, 3, 3, 'F');
-
-  pdf.setFillColor(...black);
-  pdf.triangle(3, 4, 45, 4, 3, 30, 'F');
-  pdf.triangle(3, 94, 53, 94, 3, 70, 'F');
-  pdf.triangle(205, 94, 183, 94, 205, 72, 'F');
-
-  pdf.setDrawColor(...gold);
-  pdf.setLineWidth(0.5);
-  pdf.roundedRect(6, 7, 196, 84, 2, 2);
-
-  pdf.setDrawColor(...goldLight);
-  pdf.setLineWidth(0.2);
-  pdf.roundedRect(8, 9, 192, 80, 1.5, 1.5);
-
-  const dividerX = 153;
-
-  pdf.setDrawColor(65, 55, 50);
-  pdf.setLineDashPattern([1.5, 1.5], 0);
-  pdf.line(dividerX, 5, dividerX, 92);
-  pdf.setLineDashPattern([], 0);
-
-  drawFlower(pdf, 17, 80, 10, rose, gold);
-  drawFlower(pdf, 29, 86, 7, [236, 190, 184], gold);
-  drawFlower(pdf, 143, 82, 8, rose, gold);
-
-  drawSpark(pdf, 14, 15, gold);
-  drawSpark(pdf, 25, 11, gold);
-  drawSpark(pdf, 145, 18, gold);
-
-  pdf.setTextColor(...gold);
-  pdf.setFont('times', 'italic');
-  pdf.setFontSize(24);
-  pdf.text('Uitnodiging', 100, 21, { align: 'center' });
-
-  pdf.setFillColor(...black);
-  pdf.roundedRect(62, 27, 77, 14, 2, 2, 'F');
-
-  pdf.setDrawColor(...gold);
-  pdf.roundedRect(63, 28, 75, 12, 1.4, 1.4);
-
-  pdf.setTextColor(...goldLight);
-  pdf.setFont('times', 'bold');
-  pdf.setFontSize(14);
-  pdf.text(settings.names || EVENT.names, 100.5, 36.5, { align: 'center' });
-
-  pdf.setTextColor(...text);
-  pdf.setFont('times', 'italic');
-  pdf.setFontSize(13);
-  pdf.text('43 & 45 Celebration', 100, 49, { align: 'center' });
-
-  drawDetail(pdf, 68, 58, 'DATUM', 'Vrijdag 18 September 2026', gold, text);
-  drawDetail(pdf, 68, 65, 'TIJD', 'Inloop vanaf 19.00 u', gold, text);
-  drawDetail(pdf, 68, 72, 'LOCATIE', settings.location || EVENT.location, gold, text);
-  drawDetail(pdf, 68, 79, 'DRESSCODE', settings.dresscode || EVENT.dresscode, gold, text);
-
-  if (ticket.guestName) {
-    pdf.setTextColor(...text);
-    pdf.setFont('helvetica', 'bold');
-    pdf.setFontSize(7);
-    pdf.text(ticket.guestName, 104, 85, { align: 'center' });
-  }
-
-  pdf.setFillColor(251, 232, 227);
-  pdf.roundedRect(157, 9, 42, 79, 2, 2, 'F');
-
-  pdf.setDrawColor(...gold);
-  pdf.roundedRect(158.5, 10.5, 39, 76, 1.5, 1.5);
-
-  pdf.setTextColor(...text);
-  pdf.setFont('times', 'bold');
-  pdf.setFontSize(8);
-  pdf.text('SCAN FOR ENTRY', 178, 18, { align: 'center' });
+  pdf.addImage(template, 'PNG', 0, 0, PDF_W, PDF_H, undefined, 'FAST');
 
   const qr = await QRCode.toDataURL(
     createTicketPayload(ticket),
     {
       errorCorrectionLevel: 'H',
       margin: 1,
-      width: 900,
-      color: {
-        dark: '#000000',
-        light: '#FFFFFF'
-      }
+      width: 1000,
+      color: { dark: '#000000', light: '#FFFFFF' }
     }
   );
 
+  // QR-card in the blank right-side area
+  const qrX = 164.0;
+  const qrY = 23.4;
+  const qrSize = 29.8;
+
   pdf.setFillColor(255, 255, 255);
-  pdf.setDrawColor(...gold);
-  pdf.setLineWidth(0.6);
-  pdf.roundedRect(162.5, 23, 31, 31, 2, 2, 'FD');
+  pdf.setDrawColor(179, 133, 48);
+  pdf.setLineWidth(0.55);
+  pdf.roundedRect(qrX - 1.7, qrY - 1.7, qrSize + 3.4, qrSize + 3.4, 2, 2, 'FD');
+  pdf.addImage(qr, 'PNG', qrX, qrY, qrSize, qrSize);
 
-  pdf.addImage(qr, 'PNG', 164.5, 25, 27, 27);
+  // Dynamic ticket-number plaque
+  const ticketBoxX = 161.8;
+  const ticketBoxY = 70.2;
+  const ticketBoxW = 35.0;
+  const ticketBoxH = 14.5;
 
-  pdf.setTextColor(...text);
+  pdf.setFillColor(20, 18, 17);
+  pdf.roundedRect(ticketBoxX, ticketBoxY, ticketBoxW, ticketBoxH, 2, 2, 'F');
+  pdf.setDrawColor(183, 137, 55);
+  pdf.setLineWidth(0.55);
+  pdf.roundedRect(ticketBoxX + 1, ticketBoxY + 1, ticketBoxW - 2, ticketBoxH - 2, 1.5, 1.5);
+
+  pdf.setTextColor(229, 197, 124);
   pdf.setFont('times', 'bold');
-  pdf.setFontSize(7);
-  pdf.text('ONE-TIME ENTRY', 178, 62, { align: 'center' });
+  pdf.setFontSize(5.6);
+  pdf.text('TICKET NO.', ticketBoxX + ticketBoxW / 2, ticketBoxY + 5.2, { align: 'center' });
 
-  pdf.setFillColor(...black);
-  pdf.roundedRect(162, 69, 32, 17, 2, 2, 'F');
+  pdf.setFontSize(11.5);
+  pdf.text(ticket.ticketNumber, ticketBoxX + ticketBoxW / 2, ticketBoxY + 11.3, { align: 'center' });
 
-  pdf.setDrawColor(...gold);
-  pdf.roundedRect(163, 70, 30, 15, 1.5, 1.5);
+  // Optional guest name
+  if (ticket.guestName) {
+    const guestX = 95;
+    const guestY = 84.8;
 
-  pdf.setTextColor(...goldLight);
-  pdf.setFont('times', 'bold');
-  pdf.setFontSize(5.5);
-  pdf.text('TICKET NO.', 178, 76, { align: 'center' });
+    pdf.setFillColor(255, 247, 244);
+    pdf.setDrawColor(183, 137, 55);
+    pdf.setLineWidth(0.25);
+    pdf.roundedRect(guestX - 28, guestY - 4.2, 56, 7.5, 1.3, 1.3, 'FD');
 
-  pdf.setFontSize(12);
-  pdf.text(ticket.ticketNumber, 178, 83, { align: 'center' });
-}
-
-function drawDetail(pdf, x, y, label, value, gold, text) {
-  pdf.setTextColor(...gold);
-  pdf.setFont('helvetica', 'bold');
-  pdf.setFontSize(5.5);
-  pdf.text(label, x, y);
-
-  pdf.setTextColor(...text);
-  pdf.setFont('times', 'normal');
-  pdf.setFontSize(7);
-  pdf.text(value, x + 15, y);
-}
-
-function drawSpark(pdf, x, y, gold) {
-  pdf.setDrawColor(...gold);
-  pdf.line(x - 2, y, x + 2, y);
-  pdf.line(x, y - 2, x, y + 2);
-  pdf.circle(x, y, 0.5);
-}
-
-function drawFlower(pdf, x, y, radius, rose, gold) {
-  pdf.setFillColor(...rose);
-
-  for (let i = 0; i < 8; i += 1) {
-    const angle = ((Math.PI * 2) / 8) * i;
-    const px = x + Math.cos(angle) * radius * 0.42;
-    const py = y + Math.sin(angle) * radius * 0.42;
-
-    pdf.ellipse(
-      px,
-      py,
-      radius * 0.34,
-      radius * 0.18,
-      'F'
-    );
+    pdf.setTextColor(54, 42, 36);
+    pdf.setFont('times', 'bold');
+    pdf.setFontSize(7.3);
+    pdf.text(ticket.guestName, guestX, guestY + 0.5, { align: 'center' });
   }
-
-  pdf.setFillColor(...gold);
-  pdf.circle(x, y, radius * 0.16, 'F');
 }
