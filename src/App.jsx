@@ -1,76 +1,1831 @@
+import React, { useEffect, useRef, useState } from 'react';
+
+import {
+  collection,
+  deleteDoc,
+  doc,
+  getDoc,
+  getDocs,
+  limit,
+  onSnapshot,
+  orderBy,
+  query,
+  runTransaction,
+  serverTimestamp,
+  setDoc,
+  updateDoc,
+  where
+} from 'firebase/firestore';
+
+import {
+  onAuthStateChanged,
+  signInWithEmailAndPassword,
+  signOut
+} from 'firebase/auth';
+
+import { db, auth } from './firebase';
+import { Html5Qrcode } from 'html5-qrcode';
+import QRCode from 'qrcode';
+import { jsPDF } from 'jspdf';
+
+
+const EVENT = {
+  id: 'ramona-claudio',
+  eventName: 'Uitnodiging Ramona en Claudio',
+  names: 'Ramona & Claudio',
+  subtitle: '43 & 45 Celebration',
+  date: 'Vrijdag 18 september 2026',
+  time: 'Inloop vanaf 19.00 u',
+  location: 'Lalarookh',
+  dresscode: 'All Black',
+  ticketPrefix: 'RC',
+  maxTickets: 100
+};
+
+
 // ======================================================
-// RAMONA & CLAUDIO - LUXURY CODE GENERATED TICKET
+// APP
+// ======================================================
+
+export default function App() {
+
+  const [user, setUser] = useState(undefined);
+  const [role, setRole] = useState(null);
+
+
+  useEffect(() => {
+
+    const unsubscribe = onAuthStateChanged(
+      auth,
+      async firebaseUser => {
+
+        setUser(firebaseUser || null);
+        setRole(null);
+
+        if (firebaseUser) {
+
+          const roleDoc = await getDoc(
+            doc(
+              db,
+              'rc_users',
+              firebaseUser.uid
+            )
+          );
+
+          if (roleDoc.exists()) {
+
+            setRole(
+              roleDoc.data().role
+            );
+
+          } else {
+
+            setRole(null);
+
+          }
+        }
+      }
+    );
+
+
+    return unsubscribe;
+
+  }, []);
+
+
+  if (user === undefined) {
+    return <Splash />;
+  }
+
+
+  if (!user) {
+    return <Login />;
+  }
+
+
+  if (!role) {
+
+    return (
+      <Center>
+
+        <h2>
+          Geen toegang
+        </h2>
+
+        <p>
+          Voor dit account is nog geen rol ingesteld.
+        </p>
+
+        <button
+          className="btn"
+          onClick={() => signOut(auth)}
+        >
+          Uitloggen
+        </button>
+
+      </Center>
+    );
+  }
+
+
+  const isScannerPage =
+    window.location.pathname
+      .toLowerCase()
+      .startsWith('/scanner');
+
+
+  if (
+    role === 'scanner'
+    ||
+    isScannerPage
+  ) {
+
+    return (
+      <Scanner
+        user={user}
+      />
+    );
+  }
+
+
+  return <Admin />;
+}
+
+
+// ======================================================
+// LOGIN
+// ======================================================
+
+function Login() {
+
+  const [email, setEmail] = useState('');
+  const [password, setPassword] = useState('');
+  const [error, setError] = useState('');
+
+
+  async function login(event) {
+
+    event.preventDefault();
+
+    try {
+
+      setError('');
+
+      await signInWithEmailAndPassword(
+        auth,
+        email.trim(),
+        password
+      );
+
+    } catch (err) {
+
+      console.error(err);
+
+      setError(
+        'Inloggen is niet gelukt. Controleer e-mailadres en wachtwoord.'
+      );
+
+    }
+  }
+
+
+  return (
+
+    <div className="login">
+
+      <form
+        className="card"
+        onSubmit={login}
+      >
+
+        <small>
+          RAMONA & CLAUDIO
+        </small>
+
+        <h1>
+          Event Ticketing
+        </h1>
+
+        <p>
+          Beheer en poortscanner
+        </p>
+
+
+        <label>
+          E-mailadres
+        </label>
+
+        <input
+          type="email"
+          value={email}
+          onChange={
+            event =>
+              setEmail(
+                event.target.value
+              )
+          }
+          required
+        />
+
+
+        <label>
+          Wachtwoord
+        </label>
+
+        <input
+          type="password"
+          value={password}
+          onChange={
+            event =>
+              setPassword(
+                event.target.value
+              )
+          }
+          required
+        />
+
+
+        {
+          error
+          &&
+          <div className="alert">
+            {error}
+          </div>
+        }
+
+
+        <button
+          className="btn full"
+          type="submit"
+        >
+          Inloggen
+        </button>
+
+      </form>
+
+    </div>
+  );
+}
+
+
+// ======================================================
+// ADMIN
+// ======================================================
+
+function Admin() {
+
+  const [tickets, setTickets] = useState([]);
+  const [settings, setSettings] = useState(EVENT);
+
+  const [count, setCount] = useState(1);
+  const [guestName, setGuestName] = useState('');
+
+  const [message, setMessage] = useState('');
+
+
+  useEffect(() => {
+
+    const ticketsQuery = query(
+      collection(
+        db,
+        'rc_event_tickets'
+      ),
+      orderBy('ticketNumber')
+    );
+
+
+    const unsubscribeTickets =
+      onSnapshot(
+        ticketsQuery,
+        snapshot => {
+
+          setTickets(
+            snapshot.docs.map(
+              ticketDoc => ({
+                id: ticketDoc.id,
+                ...ticketDoc.data()
+              })
+            )
+          );
+        }
+      );
+
+
+    const unsubscribeSettings =
+      onSnapshot(
+
+        doc(
+          db,
+          'rc_event_settings',
+          EVENT.id
+        ),
+
+        snapshot => {
+
+          if (snapshot.exists()) {
+
+            setSettings(
+              current => ({
+                ...current,
+                ...snapshot.data()
+              })
+            );
+
+          }
+        }
+      );
+
+
+    return () => {
+
+      unsubscribeTickets();
+      unsubscribeSettings();
+
+    };
+
+  }, []);
+
+
+  const used =
+    tickets.filter(
+      ticket =>
+        ticket.status === 'used'
+    ).length;
+
+
+  const blocked =
+    tickets.filter(
+      ticket =>
+        ticket.blocked === true
+    ).length;
+
+
+  const unused =
+    tickets.filter(
+      ticket =>
+        ticket.status !== 'used'
+        &&
+        !ticket.blocked
+    ).length;
+
+
+// ------------------------------------------------------
+// GENERATE TICKETS
+// ------------------------------------------------------
+
+  async function generateTickets() {
+
+    try {
+
+      setMessage('');
+
+
+      const quantity =
+        Math.max(
+          1,
+          Math.min(
+            Number(count) || 1,
+            50
+          )
+        );
+
+
+      const maximum =
+        Number(
+          settings.maxTickets
+          ||
+          EVENT.maxTickets
+        );
+
+
+      if (
+        tickets.length + quantity
+        >
+        maximum
+      ) {
+
+        setMessage(
+          `Je kunt maximaal ${maximum} tickets hebben.`
+        );
+
+        return;
+      }
+
+
+      const existingNumbers =
+        new Set(
+          tickets.map(
+            ticket =>
+              ticket.ticketNumber
+          )
+        );
+
+
+      let generated = 0;
+      let sequence = 1;
+
+
+      while (
+        generated < quantity
+      ) {
+
+        const ticketNumber =
+          `${
+            settings.ticketPrefix
+            ||
+            EVENT.ticketPrefix
+          }-${
+            String(sequence)
+              .padStart(
+                4,
+                '0'
+              )
+          }`;
+
+
+        sequence++;
+
+
+        if (
+          existingNumbers.has(
+            ticketNumber
+          )
+        ) {
+
+          continue;
+        }
+
+
+        await setDoc(
+
+          doc(
+            db,
+            'rc_event_tickets',
+            ticketNumber
+          ),
+
+          {
+            ticketNumber,
+
+            token:
+              createSecureToken(),
+
+            status:
+              'unused',
+
+            blocked:
+              false,
+
+            scannedAt:
+              null,
+
+            scannedBy:
+              null,
+
+            createdAt:
+              serverTimestamp(),
+
+            guestName:
+              quantity === 1
+                ? guestName.trim()
+                : '',
+
+            eventId:
+              EVENT.id,
+
+            ticketType:
+              'standard'
+          }
+
+        );
+
+
+        existingNumbers.add(
+          ticketNumber
+        );
+
+
+        generated++;
+
+      }
+
+
+      setGuestName('');
+
+
+      setMessage(
+        `${quantity} ticket${
+          quantity === 1
+            ? ''
+            : 's'
+        } succesvol gegenereerd.`
+      );
+
+
+    } catch (error) {
+
+      console.error(error);
+
+      setMessage(
+        'Tickets konden niet worden gegenereerd.'
+      );
+
+    }
+  }
+
+
+// ------------------------------------------------------
+// DELETE TICKET
+// ------------------------------------------------------
+
+  async function removeTicket(ticket) {
+
+    const confirmDelete =
+      window.confirm(
+        `${ticket.ticketNumber} verwijderen?`
+      );
+
+
+    if (!confirmDelete) {
+      return;
+    }
+
+
+    await deleteDoc(
+
+      doc(
+        db,
+        'rc_event_tickets',
+        ticket.id
+      )
+
+    );
+  }
+
+
+// ------------------------------------------------------
+// BLOCK / UNBLOCK
+// ------------------------------------------------------
+
+  async function toggleBlock(ticket) {
+
+    await updateDoc(
+
+      doc(
+        db,
+        'rc_event_tickets',
+        ticket.id
+      ),
+
+      {
+        blocked:
+          !ticket.blocked
+      }
+
+    );
+  }
+
+
+// ------------------------------------------------------
+// ADMIN UI
+// ------------------------------------------------------
+
+  return (
+
+    <div className="shell">
+
+      <header>
+
+        <div>
+
+          <small>
+            UITNODIGING
+          </small>
+
+          <h1>
+            {
+              settings.names
+              ||
+              EVENT.names
+            }
+          </h1>
+
+        </div>
+
+
+        <button
+          className="ghost"
+          onClick={
+            () => signOut(auth)
+          }
+        >
+          Uitloggen
+        </button>
+
+      </header>
+
+
+      <main>
+
+
+        <section className="hero">
+
+          <div>
+
+            <b>
+              43 & 45 CELEBRATION
+            </b>
+
+            <h2>
+              {
+                settings.eventName
+                ||
+                EVENT.eventName
+              }
+            </h2>
+
+
+            <p>
+              {
+                settings.date
+                ||
+                EVENT.date
+              }
+
+              {' · '}
+
+              {
+                settings.time
+                ||
+                EVENT.time
+              }
+            </p>
+
+
+            <p>
+              {
+                settings.location
+                ||
+                EVENT.location
+              }
+
+              {' · '}
+
+              Dresscode:{' '}
+
+              {
+                settings.dresscode
+                ||
+                EVENT.dresscode
+              }
+            </p>
+
+          </div>
+
+
+          <span>
+            ONE-TIME ENTRY
+          </span>
+
+        </section>
+
+
+        <section className="stats">
+
+          <Stat
+            number={tickets.length}
+            title="Totaal"
+          />
+
+          <Stat
+            number={unused}
+            title="Nog niet gescand"
+          />
+
+          <Stat
+            number={used}
+            title="Binnen"
+          />
+
+          <Stat
+            number={blocked}
+            title="Geblokkeerd"
+          />
+
+        </section>
+
+
+        <section className="panel">
+
+          <h3>
+            Tickets genereren
+          </h3>
+
+
+          <div className="formrow">
+
+
+            <div>
+
+              <label>
+                Aantal
+              </label>
+
+              <input
+                type="number"
+                min="1"
+                max="50"
+                value={count}
+                onChange={
+                  event =>
+                    setCount(
+                      event.target.value
+                    )
+                }
+              />
+
+            </div>
+
+
+            <div>
+
+              <label>
+                Naam (optioneel bij 1 ticket)
+              </label>
+
+              <input
+                value={guestName}
+                onChange={
+                  event =>
+                    setGuestName(
+                      event.target.value
+                    )
+                }
+                placeholder="Bijv. Familie Jansen"
+              />
+
+            </div>
+
+
+            <button
+              className="btn"
+              onClick={
+                generateTickets
+              }
+            >
+              Genereer
+            </button>
+
+
+            <button
+              className="btn soft"
+              onClick={
+                () =>
+                  batchPdf(
+                    tickets.filter(
+                      ticket =>
+                        !ticket.blocked
+                    ),
+                    settings
+                  )
+              }
+            >
+              Alle PDF's
+            </button>
+
+
+          </div>
+
+
+          {
+            message
+            &&
+            <div className="alert">
+              {message}
+            </div>
+          }
+
+        </section>
+
+
+        <section className="panel">
+
+
+          <div className="titleline">
+
+
+            <div>
+
+              <h3>
+                Tickets
+              </h3>
+
+              <p>
+                Limiet:{' '}
+                {
+                  settings.maxTickets
+                  ||
+                  EVENT.maxTickets
+                }
+              </p>
+
+            </div>
+
+
+            <a
+              className="btn"
+              href="/scanner"
+            >
+              Open scanner
+            </a>
+
+
+          </div>
+
+
+          <div className="table">
+
+
+            {
+              tickets.map(
+                ticket => (
+
+                  <div
+                    className="row"
+                    key={ticket.id}
+                  >
+
+                    <strong>
+                      {
+                        ticket.ticketNumber
+                      }
+                    </strong>
+
+
+                    <TicketStatus
+                      ticket={ticket}
+                    />
+
+
+                    <span>
+                      {
+                        ticket.guestName
+                        ||
+                        '—'
+                      }
+                    </span>
+
+
+                    <div className="actions">
+
+
+                      <button
+                        onClick={
+                          () =>
+                            ticketPdf(
+                              ticket,
+                              settings
+                            )
+                        }
+                      >
+                        PDF
+                      </button>
+
+
+                      <button
+                        onClick={
+                          () =>
+                            toggleBlock(
+                              ticket
+                            )
+                        }
+                      >
+
+                        {
+                          ticket.blocked
+                            ? 'Deblokkeer'
+                            : 'Blokkeer'
+                        }
+
+                      </button>
+
+
+                      <button
+                        className="danger"
+                        onClick={
+                          () =>
+                            removeTicket(
+                              ticket
+                            )
+                        }
+                      >
+                        Verwijder
+                      </button>
+
+
+                    </div>
+
+                  </div>
+
+                )
+              )
+            }
+
+
+          </div>
+
+        </section>
+
+
+      </main>
+
+    </div>
+  );
+}
+
+
+// ======================================================
+// SCANNER
+// ======================================================
+
+function Scanner({ user }) {
+
+  const [result, setResult] =
+    useState(null);
+
+  const [manualTicket, setManualTicket] =
+    useState('');
+
+  const [cameraActive, setCameraActive] =
+    useState(false);
+
+
+  const scannerRef =
+    useRef(null);
+
+
+  useEffect(() => {
+
+    return () => {
+
+      stopCamera();
+
+    };
+
+  }, []);
+
+
+// ------------------------------------------------------
+// START CAMERA
+// ------------------------------------------------------
+
+  async function startCamera() {
+
+    setResult(null);
+
+
+    try {
+
+      const scanner =
+        new Html5Qrcode(
+          'qr-reader'
+        );
+
+
+      scannerRef.current =
+        scanner;
+
+
+      setCameraActive(true);
+
+
+      await scanner.start(
+
+        {
+          facingMode:
+            'environment'
+        },
+
+        {
+          fps: 10,
+
+          qrbox: {
+            width: 260,
+            height: 260
+          }
+        },
+
+        async decodedText => {
+
+          await stopCamera();
+
+          await processQr(
+            decodedText
+          );
+
+        },
+
+        () => {}
+
+      );
+
+
+    } catch (error) {
+
+      console.error(error);
+
+
+      setCameraActive(false);
+
+
+      setResult({
+
+        type: 'bad',
+
+        title:
+          'Camera niet beschikbaar',
+
+        message:
+          'Controleer camera-toestemming.'
+
+      });
+
+    }
+  }
+
+
+// ------------------------------------------------------
+// STOP CAMERA
+// ------------------------------------------------------
+
+  async function stopCamera() {
+
+    if (
+      scannerRef.current
+    ) {
+
+      try {
+
+        if (
+          scannerRef.current
+            .isScanning
+        ) {
+
+          await scannerRef.current
+            .stop();
+
+        }
+
+
+        await scannerRef.current
+          .clear();
+
+
+      } catch {}
+
+
+      scannerRef.current =
+        null;
+
+    }
+
+
+    setCameraActive(false);
+  }
+
+
+// ------------------------------------------------------
+// PROCESS QR
+// ------------------------------------------------------
+
+  async function processQr(raw) {
+
+    const parsed =
+      parseTicketPayload(
+        raw
+      );
+
+
+    if (!parsed) {
+
+      setResult({
+
+        type: 'bad',
+
+        title:
+          'ONGELDIGE QR',
+
+        message:
+          'Deze QR hoort niet bij dit event.'
+
+      });
+
+      return;
+    }
+
+
+    const snapshot =
+      await getDocs(
+
+        query(
+
+          collection(
+            db,
+            'rc_event_tickets'
+          ),
+
+          where(
+            'token',
+            '==',
+            parsed.token
+          ),
+
+          limit(1)
+
+        )
+
+      );
+
+
+    if (
+      snapshot.empty
+    ) {
+
+      setResult({
+
+        type: 'bad',
+
+        title:
+          'ONGELDIG',
+
+        message:
+          'Ticket niet gevonden.'
+
+      });
+
+      return;
+    }
+
+
+    await validateTicket(
+      snapshot.docs[0].ref
+    );
+  }
+
+
+// ------------------------------------------------------
+// VALIDATE TICKET
+// ------------------------------------------------------
+
+  async function validateTicket(
+    ticketReference
+  ) {
+
+    try {
+
+      const outcome =
+        await runTransaction(
+
+          db,
+
+          async transaction => {
+
+
+            const snapshot =
+              await transaction.get(
+                ticketReference
+              );
+
+
+            if (
+              !snapshot.exists()
+            ) {
+
+              return {
+                code: 'invalid'
+              };
+
+            }
+
+
+            const data =
+              snapshot.data();
+
+
+            if (
+              data.blocked
+            ) {
+
+              return {
+                code: 'blocked',
+                data
+              };
+
+            }
+
+
+            if (
+              data.status ===
+              'used'
+            ) {
+
+              return {
+                code: 'used',
+                data
+              };
+
+            }
+
+
+            transaction.update(
+
+              ticketReference,
+
+              {
+                status: 'used',
+                scannedAt:
+                  serverTimestamp(),
+                scannedBy:
+                  user.uid
+              }
+
+            );
+
+
+            const scanReference =
+              doc(
+                collection(
+                  db,
+                  'rc_event_scans'
+                )
+              );
+
+
+            transaction.set(
+
+              scanReference,
+
+              {
+                ticketNumber:
+                  data.ticketNumber,
+
+                ticketId:
+                  ticketReference.id,
+
+                scannerId:
+                  user.uid,
+
+                scannedAt:
+                  serverTimestamp(),
+
+                result:
+                  'accepted'
+              }
+
+            );
+
+
+            return {
+
+              code: 'accepted',
+              data
+
+            };
+
+          }
+
+        );
+
+
+      if (
+        outcome.code ===
+        'accepted'
+      ) {
+
+        setResult({
+
+          type: 'ok',
+
+          title:
+            'TOEGANG GOEDGEKEURD',
+
+          message:
+            outcome.data
+              .ticketNumber
+
+        });
+
+      }
+
+
+      else if (
+        outcome.code ===
+        'used'
+      ) {
+
+        setResult({
+
+          type: 'warn',
+
+          title:
+            'REEDS GEBRUIKT',
+
+          message:
+            outcome.data
+              .ticketNumber
+
+        });
+
+      }
+
+
+      else if (
+        outcome.code ===
+        'blocked'
+      ) {
+
+        setResult({
+
+          type: 'bad',
+
+          title:
+            'TICKET GEBLOKKEERD',
+
+          message:
+            outcome.data
+              .ticketNumber
+
+        });
+
+      }
+
+
+      else {
+
+        setResult({
+
+          type: 'bad',
+
+          title:
+            'ONGELDIG',
+
+          message:
+            'Ticket niet gevonden.'
+
+        });
+
+      }
+
+
+    } catch (error) {
+
+      console.error(error);
+
+
+      setResult({
+
+        type: 'bad',
+
+        title:
+          'SCAN MISLUKT',
+
+        message:
+          'Controleer internetverbinding en Firebase.'
+
+      });
+
+    }
+  }
+
+
+// ------------------------------------------------------
+// MANUAL CHECK
+// ------------------------------------------------------
+
+  async function manualCheck() {
+
+    const ticketNumber =
+      manualTicket
+        .trim()
+        .toUpperCase();
+
+
+    if (!ticketNumber) {
+      return;
+    }
+
+
+    await validateTicket(
+
+      doc(
+        db,
+        'rc_event_tickets',
+        ticketNumber
+      )
+
+    );
+
+
+    setManualTicket('');
+  }
+
+
+// ------------------------------------------------------
+// SCANNER UI
+// ------------------------------------------------------
+
+  return (
+
+    <div className="scanpage">
+
+
+      <header>
+
+        <div>
+
+          <small>
+            RAMONA & CLAUDIO
+          </small>
+
+          <h1>
+            Gate Scanner
+          </h1>
+
+        </div>
+
+
+        <button
+          className="ghost dark"
+          onClick={
+            () => signOut(auth)
+          }
+        >
+          Uitloggen
+        </button>
+
+      </header>
+
+
+      <main className="scanmain">
+
+
+        {
+          result
+          ?(
+
+            <div
+              className={
+                `result ${result.type}`
+              }
+            >
+
+
+              <div>
+
+                {
+                  result.type ===
+                  'ok'
+                    ? '✓'
+                    : result.type ===
+                      'warn'
+                    ? '!'
+                    : '×'
+                }
+
+              </div>
+
+
+              <h2>
+                {
+                  result.title
+                }
+              </h2>
+
+
+              <p>
+                {
+                  result.message
+                }
+              </p>
+
+
+              <button
+                className="btn light"
+                onClick={
+                  () =>
+                    setResult(null)
+                }
+              >
+                Volgende ticket
+              </button>
+
+
+            </div>
+
+          )
+          :(
+
+            <>
+
+
+              <section className="scanner">
+
+                <div
+                  id="qr-reader"
+                />
+
+
+                {
+                  !cameraActive
+                  &&
+                  <div className="placeholder">
+
+                    <h2>
+                      Scan ticket
+                    </h2>
+
+                    <p>
+                      Open de camera en richt op de QR-code.
+                    </p>
+
+                    <button
+                      className="btn"
+                      onClick={
+                        startCamera
+                      }
+                    >
+                      Camera openen
+                    </button>
+
+                  </div>
+                }
+
+              </section>
+
+
+              <section className="manual">
+
+                <h3>
+                  Handmatige controle
+                </h3>
+
+
+                <div>
+
+                  <input
+                    value={
+                      manualTicket
+                    }
+                    onChange={
+                      event =>
+                        setManualTicket(
+                          event.target.value
+                        )
+                    }
+                    placeholder="RC-0001"
+                  />
+
+
+                  <button
+                    className="btn"
+                    onClick={
+                      manualCheck
+                    }
+                  >
+                    Controleer
+                  </button>
+
+
+                </div>
+
+              </section>
+
+
+            </>
+
+          )
+        }
+
+
+      </main>
+
+    </div>
+  );
+}
+
+
+// ======================================================
+// SMALL UI COMPONENTS
+// ======================================================
+
+function Stat({
+  number,
+  title
+}) {
+
+  return (
+
+    <div className="stat">
+
+      <strong>
+        {number}
+      </strong>
+
+      <span>
+        {title}
+      </span>
+
+    </div>
+  );
+}
+
+
+function TicketStatus({
+  ticket
+}) {
+
+  let statusClass =
+    'unused';
+
+  let text =
+    'Ongebruikt';
+
+
+  if (
+    ticket.blocked
+  ) {
+
+    statusClass =
+      'blocked';
+
+    text =
+      'Geblokkeerd';
+
+  }
+
+  else if (
+    ticket.status ===
+    'used'
+  ) {
+
+    statusClass =
+      'used';
+
+    text =
+      'Binnen';
+
+  }
+
+
+  return (
+
+    <span
+      className={
+        `status ${statusClass}`
+      }
+    >
+      {text}
+    </span>
+  );
+}
+
+
+function Splash() {
+
+  return (
+
+    <div className="center">
+      Laden...
+    </div>
+  );
+}
+
+
+function Center({
+  children
+}) {
+
+  return (
+
+    <div className="center">
+
+      <div className="panel">
+        {children}
+      </div>
+
+    </div>
+  );
+}
+
+
+// ======================================================
+// TICKET TOKEN / QR PAYLOAD
+// ======================================================
+
+function createSecureToken() {
+
+  return (
+
+    crypto
+      .randomUUID()
+      .replaceAll(
+        '-',
+        ''
+      )
+
+    +
+
+    crypto
+      .randomUUID()
+      .replaceAll(
+        '-',
+        ''
+      )
+
+  );
+}
+
+
+function createTicketPayload(
+  ticket
+) {
+
+  return (
+    `RC-EVENT|${ticket.ticketNumber}|${ticket.token}`
+  );
+}
+
+
+function parseTicketPayload(
+  value
+) {
+
+  const parts =
+    String(value)
+      .split('|');
+
+
+  if (
+    parts.length === 3
+    &&
+    parts[0] ===
+      'RC-EVENT'
+  ) {
+
+    return {
+
+      ticketNumber:
+        parts[1],
+
+      token:
+        parts[2]
+
+    };
+  }
+
+
+  return null;
+}
+
+
+// ======================================================
+// PDF TICKET
 // ======================================================
 
 const PDF_W = 210;
 const PDF_H = 99;
 
-let coupleImageCache = undefined;
-
 
 // ------------------------------------------------------
-// Optionele foto van Ramona & Claudio laden
-// Zet deze als: public/couple.png
+// DOWNLOAD SINGLE PDF
 // ------------------------------------------------------
 
-async function getCoupleImage(){
+async function ticketPdf(
+  ticket,
+  settings
+) {
 
-  if(coupleImageCache !== undefined){
-    return coupleImageCache;
-  }
+  try {
 
-  try{
+    const pdf =
+      new jsPDF({
 
-    const response = await fetch('/couple.png');
+        orientation:
+          'landscape',
 
-    if(!response.ok){
-      coupleImageCache = null;
-      return null;
-    }
+        unit:
+          'mm',
 
-    const blob = await response.blob();
+        format:
+          [
+            PDF_W,
+            PDF_H
+          ]
 
-    coupleImageCache = await new Promise(
-      (resolve,reject)=>{
-
-        const reader = new FileReader();
-
-        reader.onload = () => resolve(reader.result);
-        reader.onerror = reject;
-
-        reader.readAsDataURL(blob);
-      }
-    );
-
-    return coupleImageCache;
-
-  }catch(error){
-
-    console.warn('couple.png niet gevonden',error);
-
-    coupleImageCache = null;
-
-    return null;
-  }
-}
+      });
 
 
-// ------------------------------------------------------
-// Eén ticket downloaden
-// ------------------------------------------------------
-
-async function ticketPdf(ticket,settings){
-
-  try{
-
-    const pdf = new jsPDF({
-      orientation:'landscape',
-      unit:'mm',
-      format:[PDF_W,PDF_H]
-    });
-
-
-    await drawRamonaTicket(
+    await drawTicket(
       pdf,
       ticket,
       settings
@@ -81,57 +1836,87 @@ async function ticketPdf(ticket,settings){
       `${ticket.ticketNumber}.pdf`
     );
 
-  }catch(error){
+
+  } catch (error) {
 
     console.error(error);
 
     alert(
       'De ticket PDF kon niet worden gemaakt.'
     );
+
   }
 }
 
 
 // ------------------------------------------------------
-// Alle tickets in één PDF
+// DOWNLOAD ALL PDF
 // ------------------------------------------------------
 
-async function batchPdf(tickets,settings){
+async function batchPdf(
+  tickets,
+  settings
+) {
 
-  if(!tickets.length){
+  if (
+    !tickets.length
+  ) {
+
     return;
   }
 
 
-  try{
+  try {
 
-    const pdf = new jsPDF({
-      orientation:'landscape',
-      unit:'mm',
-      format:[PDF_W,PDF_H]
-    });
+    const pdf =
+      new jsPDF({
+
+        orientation:
+          'landscape',
+
+        unit:
+          'mm',
+
+        format:
+          [
+            PDF_W,
+            PDF_H
+          ]
+
+      });
 
 
-    for(
-      let i=0;
-      i<tickets.length;
+    for (
+      let i = 0;
+      i < tickets.length;
       i++
-    ){
+    ) {
 
-      if(i > 0){
+      if (
+        i > 0
+      ) {
 
         pdf.addPage(
-          [PDF_W,PDF_H],
+
+          [
+            PDF_W,
+            PDF_H
+          ],
+
           'landscape'
+
         );
       }
 
 
-      await drawRamonaTicket(
+      await drawTicket(
+
         pdf,
         tickets[i],
         settings
+
       );
+
     }
 
 
@@ -139,48 +1924,59 @@ async function batchPdf(tickets,settings){
       'Ramona-Claudio-Tickets.pdf'
     );
 
-  }catch(error){
+
+  } catch (error) {
 
     console.error(error);
 
     alert(
       'De tickets konden niet worden gemaakt.'
     );
+
   }
 }
 
 
-// ------------------------------------------------------
-// HOOFD TICKET DESIGN
-// ------------------------------------------------------
+// ======================================================
+// DRAW LUXURY TICKET
+// ======================================================
 
-async function drawRamonaTicket(
+async function drawTicket(
   pdf,
   ticket,
   settings
-){
+) {
 
-  const blush = [249,232,228];
-  const blushLight = [255,247,244];
+  const blush =
+    [249,232,228];
 
-  const rose = [181,116,107];
+  const blushLight =
+    [255,248,245];
 
-  const gold = [183,137,56];
-  const goldLight = [226,194,122];
+  const rose =
+    [180,111,101];
 
-  const black = [20,17,16];
-  const blackSoft = [34,28,25];
+  const gold =
+    [183,137,55];
 
-  const text = [46,36,31];
+  const goldLight =
+    [230,198,125];
+
+  const black =
+    [22,18,17];
+
+  const text =
+    [48,37,32];
 
 
-  // ====================================================
-  // ACHTERGROND
-  // ====================================================
+  // ---------------------------------------------------
+  // BACKGROUND
+  // ---------------------------------------------------
 
   pdf.setFillColor(
     ...blushLight
   );
+
 
   pdf.rect(
     0,
@@ -191,117 +1987,92 @@ async function drawRamonaTicket(
   );
 
 
-  // Ticket shadow
-
-  pdf.setFillColor(
-    230,
-    219,
-    213
-  );
-
-  pdf.roundedRect(
-    4.5,
-    5.5,
-    201,
-    89,
-    3,
-    3,
-    'F'
-  );
-
-
-  // Ticket body
-
   pdf.setFillColor(
     ...blush
   );
 
+
   pdf.roundedRect(
     3,
     4,
-    201,
-    89,
+    202,
+    90,
     3,
     3,
     'F'
   );
 
 
-  // ====================================================
-  // DECORATIEVE ZWARTE HOEKEN
-  // ====================================================
+  // ---------------------------------------------------
+  // BLACK LUXURY CORNERS
+  // ---------------------------------------------------
 
   pdf.setFillColor(
     ...black
   );
 
 
-  // linksboven
-
   pdf.triangle(
     3,
     4,
 
-    48,
+    45,
     4,
 
     3,
-    31,
+    30,
 
     'F'
   );
 
-
-  // linksonder
 
   pdf.triangle(
     3,
-    93,
+    94,
 
-    54,
-    93,
+    53,
+    94,
 
     3,
-    69,
+    70,
 
     'F'
   );
 
-
-  // rechtsonder
 
   pdf.triangle(
-    204,
-    93,
+    205,
+    94,
 
-    180,
-    93,
+    183,
+    94,
 
-    204,
-    74,
+    205,
+    72,
 
     'F'
   );
 
 
-  // ====================================================
-  // GOUDEN RANDEN
-  // ====================================================
+  // ---------------------------------------------------
+  // GOLD BORDERS
+  // ---------------------------------------------------
 
   pdf.setDrawColor(
     ...gold
   );
 
+
   pdf.setLineWidth(
-    0.45
+    0.5
   );
 
 
   pdf.roundedRect(
     6,
     7,
-    195,
-    83,
+    196,
+    84,
     2,
     2
   );
@@ -311,6 +2082,7 @@ async function drawRamonaTicket(
     ...goldLight
   );
 
+
   pdf.setLineWidth(
     0.2
   );
@@ -319,37 +2091,41 @@ async function drawRamonaTicket(
   pdf.roundedRect(
     8,
     9,
-    191,
-    79,
+    192,
+    80,
     1.5,
     1.5
   );
 
 
-  // ====================================================
-  // PERFORATIELIJN
-  // ====================================================
+  // ---------------------------------------------------
+  // RIGHT STUB DIVIDER
+  // ---------------------------------------------------
 
-  const stubX = 154;
+  const dividerX =
+    153;
 
 
   pdf.setDrawColor(
-    85,
-    75,
-    68
+    65,
+    55,
+    50
   );
 
 
   pdf.setLineDashPattern(
-    [1.5,1.4],
+    [
+      1.5,
+      1.5
+    ],
     0
   );
 
 
   pdf.line(
-    stubX,
+    dividerX,
     5,
-    stubX,
+    dividerX,
     92
   );
 
@@ -360,49 +2136,16 @@ async function drawRamonaTicket(
   );
 
 
-  // ====================================================
-  // DECORATIEVE SPARKLES
-  // ====================================================
-
-  drawSpark(
-    pdf,
-    14,
-    15,
-    gold
-  );
-
-  drawSpark(
-    pdf,
-    25,
-    10,
-    goldLight
-  );
-
-  drawSpark(
-    pdf,
-    144,
-    18,
-    gold
-  );
-
-  drawSpark(
-    pdf,
-    198,
-    19,
-    gold
-  );
-
-
-  // ====================================================
-  // BLOEMEN DECORATIE
-  // ====================================================
+  // ---------------------------------------------------
+  // DECORATIVE FLOWERS
+  // ---------------------------------------------------
 
   drawFlower(
     pdf,
     17,
-    81,
+    80,
     10,
-    [221,160,157],
+    rose,
     gold
   );
 
@@ -422,52 +2165,42 @@ async function drawRamonaTicket(
     143,
     82,
     8,
-    [220,157,155],
+    rose,
     gold
   );
 
 
-  // ====================================================
-  // FOTO RAMONA & CLAUDIO
-  // ====================================================
+  // ---------------------------------------------------
+  // SPARKLES
+  // ---------------------------------------------------
 
-  const couple =
-    await getCoupleImage();
-
-
-  if(couple){
-
-    try{
-
-      pdf.addImage(
-        couple,
-        'PNG',
-
-        7,
-        14,
-
-        49,
-        69,
-
-        undefined,
-
-        'FAST'
-      );
-
-    }catch(error){
-
-      console.warn(
-        'couple.png kon niet geladen worden',
-        error
-      );
-    }
-
-  }
+  drawSpark(
+    pdf,
+    14,
+    15,
+    gold
+  );
 
 
-  // ====================================================
+  drawSpark(
+    pdf,
+    25,
+    11,
+    gold
+  );
+
+
+  drawSpark(
+    pdf,
+    145,
+    18,
+    gold
+  );
+
+
+  // ---------------------------------------------------
   // UITNODIGING
-  // ====================================================
+  // ---------------------------------------------------
 
   pdf.setTextColor(
     ...gold
@@ -487,53 +2220,18 @@ async function drawRamonaTicket(
 
   pdf.text(
     'Uitnodiging',
-
-    101,
-    20,
-
+    100,
+    21,
     {
-      align:'center'
+      align:
+        'center'
     }
   );
 
 
-  // ornament
-
-  pdf.setDrawColor(
-    ...gold
-  );
-
-  pdf.setLineWidth(
-    .3
-  );
-
-
-  pdf.line(
-    84,
-    24,
-    94,
-    24
-  );
-
-
-  pdf.line(
-    108,
-    24,
-    118,
-    24
-  );
-
-
-  pdf.circle(
-    101,
-    24,
-    1
-  );
-
-
-  // ====================================================
-  // NAAM BLACK GOLD PLAQUE
-  // ====================================================
+  // ---------------------------------------------------
+  // NAME PLAQUE
+  // ---------------------------------------------------
 
   pdf.setFillColor(
     ...black
@@ -543,8 +2241,8 @@ async function drawRamonaTicket(
   pdf.roundedRect(
     62,
     27,
-    78,
-    15,
+    77,
+    14,
     2,
     2,
     'F'
@@ -553,228 +2251,14 @@ async function drawRamonaTicket(
 
   pdf.setDrawColor(
     ...gold
-  );
-
-  pdf.setLineWidth(
-    .5
   );
 
 
   pdf.roundedRect(
     63,
     28,
-    76,
-    13,
-    1.5,
-    1.5
-  );
-
-
-  pdf.setTextColor(
-    ...goldLight
-  );
-
-
-  pdf.setFont(
-    'times',
-    'bold'
-  );
-
-
-  pdf.setFontSize(
-    15
-  );
-
-
-  pdf.text(
-    settings.names || EVENT.names,
-
-    101,
-    37,
-
-    {
-      align:'center'
-    }
-  );
-
-
-  // ====================================================
-  // 43 & 45 CELEBRATION
-  // ====================================================
-
-  pdf.setTextColor(
-    ...blackSoft
-  );
-
-
-  pdf.setFont(
-    'times',
-    'italic'
-  );
-
-
-  pdf.setFontSize(
-    13
-  );
-
-
-  pdf.text(
-    '43 & 45 Celebration',
-
-    101,
-    49,
-
-    {
-      align:'center'
-    }
-  );
-
-
-  // ====================================================
-  // EVENT DETAILS
-  // ====================================================
-
-  const labelX = 76;
-
-  const valueX = 82;
-
-
-  drawDetailLine(
-    pdf,
-
-    labelX,
-    valueX,
-
-    57,
-
-    'DATUM',
-
-    'Vrijdag 18 September 2026',
-
-    gold,
-    text
-  );
-
-
-  drawDetailLine(
-    pdf,
-
-    labelX,
-    valueX,
-
-    64,
-
-    'TIJD',
-
-    'Inloop vanaf 19.00 u',
-
-    gold,
-    text
-  );
-
-
-  drawDetailLine(
-    pdf,
-
-    labelX,
-    valueX,
-
-    71,
-
-    'LOCATIE',
-
-    settings.location || EVENT.location,
-
-    gold,
-    text
-  );
-
-
-  drawDetailLine(
-    pdf,
-
-    labelX,
-    valueX,
-
-    78,
-
-    'DRESSCODE',
-
-    settings.dresscode || EVENT.dresscode,
-
-    gold,
-    text
-  );
-
-
-  // ====================================================
-  // GASTNAAM
-  // ====================================================
-
-  if(ticket.guestName){
-
-    pdf.setTextColor(
-      ...text
-    );
-
-    pdf.setFont(
-      'helvetica',
-      'bold'
-    );
-
-    pdf.setFontSize(
-      7.5
-    );
-
-
-    pdf.text(
-      ticket.guestName,
-
-      103,
-      84,
-
-      {
-        align:'center'
-      }
-    );
-  }
-
-
-  // ====================================================
-  // STANDARD TICKET
-  // ====================================================
-
-  pdf.setFillColor(
-    ...black
-  );
-
-
-  pdf.roundedRect(
-    68,
-    84.5,
-
-    66,
-    9,
-
-    2,
-    2,
-
-    'F'
-  );
-
-
-  pdf.setDrawColor(
-    ...gold
-  );
-
-
-  pdf.roundedRect(
-    69,
-    85.5,
-
-    64,
-    7,
-
+    75,
+    12,
     1.4,
     1.4
   );
@@ -792,25 +2276,147 @@ async function drawRamonaTicket(
 
 
   pdf.setFontSize(
-    9.5
+    14
   );
 
 
   pdf.text(
-    'STANDARD TICKET',
+    settings.names
+    ||
+    EVENT.names,
 
-    101,
-    91,
+    100.5,
+    36.5,
 
     {
-      align:'center'
+      align:
+        'center'
     }
   );
 
 
-  // ====================================================
-  // RECHTER STUB
-  // ====================================================
+  // ---------------------------------------------------
+  // CELEBRATION
+  // ---------------------------------------------------
+
+  pdf.setTextColor(
+    ...text
+  );
+
+
+  pdf.setFont(
+    'times',
+    'italic'
+  );
+
+
+  pdf.setFontSize(
+    13
+  );
+
+
+  pdf.text(
+    '43 & 45 Celebration',
+    100,
+    49,
+    {
+      align:
+        'center'
+    }
+  );
+
+
+  // ---------------------------------------------------
+  // DETAILS
+  // ---------------------------------------------------
+
+  drawDetail(
+    pdf,
+    68,
+    58,
+    'DATUM',
+    'Vrijdag 18 September 2026',
+    gold,
+    text
+  );
+
+
+  drawDetail(
+    pdf,
+    68,
+    65,
+    'TIJD',
+    'Inloop vanaf 19.00 u',
+    gold,
+    text
+  );
+
+
+  drawDetail(
+    pdf,
+    68,
+    72,
+    'LOCATIE',
+    settings.location
+    ||
+    EVENT.location,
+    gold,
+    text
+  );
+
+
+  drawDetail(
+    pdf,
+    68,
+    79,
+    'DRESSCODE',
+    settings.dresscode
+    ||
+    EVENT.dresscode,
+    gold,
+    text
+  );
+
+
+  // ---------------------------------------------------
+  // GUEST NAME
+  // ---------------------------------------------------
+
+  if (
+    ticket.guestName
+  ) {
+
+    pdf.setTextColor(
+      ...text
+    );
+
+
+    pdf.setFont(
+      'helvetica',
+      'bold'
+    );
+
+
+    pdf.setFontSize(
+      7
+    );
+
+
+    pdf.text(
+      ticket.guestName,
+      104,
+      85,
+      {
+        align:
+          'center'
+      }
+    );
+  }
+
+
+  // ---------------------------------------------------
+  // RIGHT STUB BACKGROUND
+  // ---------------------------------------------------
 
   pdf.setFillColor(
     251,
@@ -822,13 +2428,10 @@ async function drawRamonaTicket(
   pdf.roundedRect(
     157,
     9,
-
     42,
     79,
-
     2,
     2,
-
     'F'
   );
 
@@ -838,29 +2441,22 @@ async function drawRamonaTicket(
   );
 
 
-  pdf.setLineWidth(
-    .45
-  );
-
-
   pdf.roundedRect(
     158.5,
     10.5,
-
     39,
     76,
-
-    1.7,
-    1.7
+    1.5,
+    1.5
   );
 
 
-  // ====================================================
-  // SCAN LABEL
-  // ====================================================
+  // ---------------------------------------------------
+  // SCAN TEXT
+  // ---------------------------------------------------
 
   pdf.setTextColor(
-    ...blackSoft
+    ...text
   );
 
 
@@ -877,19 +2473,47 @@ async function drawRamonaTicket(
 
   pdf.text(
     'SCAN FOR ENTRY',
-
     178,
-    19,
-
+    18,
     {
-      align:'center'
+      align:
+        'center'
     }
   );
 
 
-  // ====================================================
-  // QR FRAME
-  // ====================================================
+  // ---------------------------------------------------
+  // QR
+  // ---------------------------------------------------
+
+  const qr =
+    await QRCode.toDataURL(
+
+      createTicketPayload(
+        ticket
+      ),
+
+      {
+        errorCorrectionLevel:
+          'H',
+
+        margin:
+          1,
+
+        width:
+          900,
+
+        color: {
+          dark:
+            '#000000',
+
+          light:
+            '#FFFFFF'
+        }
+      }
+
+    );
+
 
   pdf.setFillColor(
     255,
@@ -904,62 +2528,37 @@ async function drawRamonaTicket(
 
 
   pdf.setLineWidth(
-    .6
+    0.6
   );
 
 
   pdf.roundedRect(
-    163,
-    24,
-
-    30,
-    30,
-
+    162.5,
+    23,
+    31,
+    31,
     2,
     2,
-
     'FD'
   );
-
-
-  // QR genereren
-
-  const qr =
-    await QRCode.toDataURL(
-
-      payload(ticket),
-
-      {
-        errorCorrectionLevel:'H',
-        margin:1,
-        width:900,
-
-        color:{
-          dark:'#000000',
-          light:'#FFFFFF'
-        }
-      }
-    );
 
 
   pdf.addImage(
     qr,
     'PNG',
-
-    165,
-    26,
-
-    26,
-    26
+    164.5,
+    25,
+    27,
+    27
   );
 
 
-  // ====================================================
+  // ---------------------------------------------------
   // ONE TIME ENTRY
-  // ====================================================
+  // ---------------------------------------------------
 
   pdf.setTextColor(
-    ...blackSoft
+    ...text
   );
 
 
@@ -970,53 +2569,24 @@ async function drawRamonaTicket(
 
 
   pdf.setFontSize(
-    7.5
+    7
   );
 
 
   pdf.text(
     'ONE-TIME ENTRY',
-
     178,
     62,
-
     {
-      align:'center'
+      align:
+        'center'
     }
   );
 
 
-  pdf.setDrawColor(
-    ...gold
-  );
-
-
-  pdf.line(
-    168,
-    66,
-    175,
-    66
-  );
-
-
-  pdf.circle(
-    178,
-    66,
-    .9
-  );
-
-
-  pdf.line(
-    181,
-    66,
-    188,
-    66
-  );
-
-
-  // ====================================================
-  // TICKET NO BLACK GOLD PLAQUE
-  // ====================================================
+  // ---------------------------------------------------
+  // TICKET NUMBER
+  // ---------------------------------------------------
 
   pdf.setFillColor(
     ...black
@@ -1025,14 +2595,11 @@ async function drawRamonaTicket(
 
   pdf.roundedRect(
     162,
-    71,
-
+    69,
     32,
-    16,
-
+    17,
     2,
     2,
-
     'F'
   );
 
@@ -1044,11 +2611,9 @@ async function drawRamonaTicket(
 
   pdf.roundedRect(
     163,
-    72,
-
+    70,
     30,
-    14,
-
+    15,
     1.5,
     1.5
   );
@@ -1072,12 +2637,11 @@ async function drawRamonaTicket(
 
   pdf.text(
     'TICKET NO.',
-
     178,
-    77,
-
+    76,
     {
-      align:'center'
+      align:
+        'center'
     }
   );
 
@@ -1089,31 +2653,29 @@ async function drawRamonaTicket(
 
   pdf.text(
     ticket.ticketNumber,
-
     178,
-    84,
-
+    83,
     {
-      align:'center'
+      align:
+        'center'
     }
   );
 }
 
 
 // ======================================================
-// DETAIL LINE
+// PDF HELPERS
 // ======================================================
 
-function drawDetailLine(
+function drawDetail(
   pdf,
-  labelX,
-  valueX,
+  x,
   y,
   label,
   value,
   gold,
   text
-){
+) {
 
   pdf.setTextColor(
     ...gold
@@ -1133,8 +2695,7 @@ function drawDetailLine(
 
   pdf.text(
     label,
-
-    labelX,
+    x,
     y
   );
 
@@ -1151,69 +2712,53 @@ function drawDetailLine(
 
 
   pdf.setFontSize(
-    7.2
+    7
   );
 
 
   pdf.text(
     value,
-
-    valueX,
+    x + 15,
     y
   );
 }
 
-
-// ======================================================
-// SPARKLE
-// ======================================================
 
 function drawSpark(
   pdf,
   x,
   y,
   gold
-){
+) {
 
   pdf.setDrawColor(
     ...gold
   );
 
 
-  pdf.setLineWidth(
-    .35
-  );
-
-
   pdf.line(
-    x-2,
+    x - 2,
     y,
-
-    x+2,
+    x + 2,
     y
   );
 
 
   pdf.line(
     x,
-    y-2,
-
+    y - 2,
     x,
-    y+2
+    y + 2
   );
 
 
   pdf.circle(
     x,
     y,
-    .5
+    0.5
   );
 }
 
-
-// ======================================================
-// FLOWER
-// ======================================================
 
 function drawFlower(
   pdf,
@@ -1222,22 +2767,22 @@ function drawFlower(
   radius,
   rose,
   gold
-){
+) {
 
   pdf.setFillColor(
     ...rose
   );
 
 
-  for(
-    let i=0;
-    i<8;
+  for (
+    let i = 0;
+    i < 8;
     i++
-  ){
+  ) {
 
-    const angle=
+    const angle =
       (
-        Math.PI*2
+        Math.PI * 2
         /
         8
       )
@@ -1245,33 +2790,31 @@ function drawFlower(
       i;
 
 
-    const px=
+    const px =
       x
       +
       Math.cos(angle)
       *
       radius
       *
-      .42;
+      0.42;
 
 
-    const py=
+    const py =
       y
       +
       Math.sin(angle)
       *
       radius
       *
-      .42;
+      0.42;
 
 
     pdf.ellipse(
       px,
       py,
-
-      radius*.34,
-      radius*.18,
-
+      radius * 0.34,
+      radius * 0.18,
       'F'
     );
   }
@@ -1285,9 +2828,7 @@ function drawFlower(
   pdf.circle(
     x,
     y,
-
-    radius*.16,
-
+    radius * 0.16,
     'F'
   );
 }
