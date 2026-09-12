@@ -1568,17 +1568,12 @@ function drawCanvasTicketNumber(
     Math.max(2, 0.55 * mmX)
   );
 
-  ctx.textAlign =
-    'center';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#e5c57c';
 
-  ctx.textBaseline =
-    'middle';
-
-  ctx.fillStyle =
-    '#e5c57c';
-
-  ctx.font =
-    `bold ${Math.round(18 * mmY)}px Georgia, serif`;
+  // Kleine labeltekst bovenaan
+  ctx.font = 'bold 18px Georgia, serif';
 
   ctx.fillText(
     'TICKET NO.',
@@ -1586,8 +1581,8 @@ function drawCanvasTicketNumber(
     y + h * 0.34
   );
 
-  ctx.font =
-    `bold ${Math.round(37 * mmY)}px Georgia, serif`;
+  // Dynamisch ticketnummer
+  ctx.font = 'bold 34px Georgia, serif';
 
   ctx.fillText(
     ticket.ticketNumber,
@@ -1621,17 +1616,12 @@ function drawCanvasGuestName(
     Math.max(2, 0.45 * mmX)
   );
 
-  ctx.textAlign =
-    'center';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#e5c57c';
 
-  ctx.textBaseline =
-    'middle';
-
-  ctx.fillStyle =
-    '#e5c57c';
-
-  ctx.font =
-    `bold ${Math.round(27 * mmY)}px Georgia, serif`;
+  // Zelfde luxe black/gold look als ticketnummer
+  ctx.font = 'bold 28px Georgia, serif';
 
   ctx.fillText(
     ticket.guestName,
