@@ -29,6 +29,7 @@ import { jsPDF } from 'jspdf';
 
 import { auth, db } from './firebase';
 
+
 const EVENT = {
   id: 'ramona-claudio',
   eventName: 'Uitnodiging Ramona en Claudio',
@@ -39,8 +40,13 @@ const EVENT = {
   location: 'Lalarookh',
   dresscode: 'All Black',
   ticketPrefix: 'RC',
-  maxTickets: 100
+  maxTickets: 200
 };
+
+
+// ======================================================
+// APP
+// ======================================================
 
 export default function App() {
   const [user, setUser] = useState(undefined);
@@ -72,13 +78,8 @@ export default function App() {
     return unsubscribe;
   }, []);
 
-  if (user === undefined) {
-    return <Splash />;
-  }
-
-  if (!user) {
-    return <Login />;
-  }
+  if (user === undefined) return <Splash />;
+  if (!user) return <Login />;
 
   if (!role) {
     return (
@@ -103,6 +104,11 @@ export default function App() {
 
   return <Admin />;
 }
+
+
+// ======================================================
+// LOGIN
+// ======================================================
 
 function Login() {
   const [email, setEmail] = useState('');
@@ -159,6 +165,11 @@ function Login() {
     </div>
   );
 }
+
+
+// ======================================================
+// ADMIN
+// ======================================================
 
 function Admin() {
   const [tickets, setTickets] = useState([]);
@@ -246,9 +257,7 @@ function Admin() {
 
         sequence += 1;
 
-        if (existingNumbers.has(ticketNumber)) {
-          continue;
-        }
+        if (existingNumbers.has(ticketNumber)) continue;
 
         await setDoc(
           doc(db, 'rc_event_tickets', ticketNumber),
@@ -438,6 +447,14 @@ function Admin() {
 
                   <button
                     onClick={() =>
+                      ticketJpeg(ticket, settings)
+                    }
+                  >
+                    JPEG
+                  </button>
+
+                  <button
+                    onClick={() =>
                       toggleBlock(ticket)
                     }
                   >
@@ -462,10 +479,16 @@ function Admin() {
   );
 }
 
+
+// ======================================================
+// SCANNER
+// ======================================================
+
 function Scanner({ user }) {
   const [result, setResult] = useState(null);
   const [manualTicket, setManualTicket] = useState('');
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraMessage, setCameraMessage] = useState('');
   const scannerRef = useRef(null);
 
   useEffect(() => {
@@ -476,20 +499,69 @@ function Scanner({ user }) {
 
   async function startCamera() {
     setResult(null);
+    setCameraMessage('');
 
     try {
+      if (!window.isSecureContext) {
+        throw new Error('Deze pagina moet via HTTPS geopend worden.');
+      }
+
+      if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+        throw new Error('Camera wordt niet ondersteund door deze browser.');
+      }
+
+      // First ask for camera permission directly.
+      // This also helps browsers expose useful device labels.
+      let permissionStream = null;
+
+      try {
+        permissionStream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: 'environment' }
+          },
+          audio: false
+        });
+      } catch (permissionError) {
+        console.warn('Camera permission request failed:', permissionError);
+      }
+
+      if (permissionStream) {
+        permissionStream.getTracks().forEach((track) => track.stop());
+      }
+
+      const cameras = await Html5Qrcode.getCameras();
+
+      if (!cameras || cameras.length === 0) {
+        throw new Error('Geen camera gevonden.');
+      }
+
+      console.log('Beschikbare camera’s:', cameras);
+
+      const rearCamera =
+        cameras.find((camera) =>
+          /back|rear|environment|achter|world/i.test(camera.label || '')
+        )
+        ||
+        cameras[cameras.length - 1];
+
       const scanner = new Html5Qrcode('qr-reader');
       scannerRef.current = scanner;
       setCameraActive(true);
 
+      const cameraConfig =
+        rearCamera?.id
+          ? rearCamera.id
+          : { facingMode: { ideal: 'environment' } };
+
       await scanner.start(
-        { facingMode: 'environment' },
+        cameraConfig,
         {
-          fps: 10,
+          fps: 12,
           qrbox: {
-            width: 260,
-            height: 260
-          }
+            width: 280,
+            height: 280
+          },
+          aspectRatio: 1
         },
         async (decodedText) => {
           await stopCamera();
@@ -497,20 +569,64 @@ function Scanner({ user }) {
         },
         () => {}
       );
-    } catch (error) {
-      console.error(error);
-      setCameraActive(false);
 
-      setResult({
-        type: 'bad',
-        title: 'Camera niet beschikbaar',
-        message: 'Controleer camera-toestemming.'
-      });
+      setCameraMessage(
+        rearCamera?.label
+          ? `Camera actief: ${rearCamera.label}`
+          : 'Camera actief'
+      );
+    } catch (firstError) {
+      console.error('Rear camera start failed:', firstError);
+
+      // Fallback: ask browser directly for environment camera.
+      try {
+        if (scannerRef.current) {
+          try {
+            await scannerRef.current.clear();
+          } catch {}
+        }
+
+        const scanner = new Html5Qrcode('qr-reader');
+        scannerRef.current = scanner;
+        setCameraActive(true);
+
+        await scanner.start(
+          {
+            facingMode: 'environment'
+          },
+          {
+            fps: 10,
+            qrbox: {
+              width: 260,
+              height: 260
+            }
+          },
+          async (decodedText) => {
+            await stopCamera();
+            await processQr(decodedText);
+          },
+          () => {}
+        );
+
+        setCameraMessage('Achtercamera actief');
+      } catch (fallbackError) {
+        console.error('Camera fallback failed:', fallbackError);
+
+        setCameraActive(false);
+
+        setResult({
+          type: 'bad',
+          title: 'CAMERA KAN NIET OPENEN',
+          message:
+            'Controleer Chrome > Site-instellingen > Camera en Android/iPhone camera-machtigingen. Herlaad daarna de pagina.'
+        });
+      }
     }
   }
 
   async function stopCamera() {
     if (!scannerRef.current) {
+      setCameraActive(false);
       return;
     }
 
@@ -524,6 +640,7 @@ function Scanner({ user }) {
 
     scannerRef.current = null;
     setCameraActive(false);
+    setCameraMessage('');
   }
 
   async function processQr(raw) {
@@ -677,9 +794,7 @@ function Scanner({ user }) {
         .trim()
         .toUpperCase();
 
-    if (!ticketNumber) {
-      return;
-    }
+    if (!ticketNumber) return;
 
     await validateTicket(
       doc(
@@ -741,7 +856,6 @@ function Scanner({ user }) {
               {!cameraActive && (
                 <div className="placeholder">
                   <h2>Scan ticket</h2>
-
                   <p>
                     Open de camera en richt op de QR-code.
                   </p>
@@ -750,9 +864,15 @@ function Scanner({ user }) {
                     className="btn"
                     onClick={startCamera}
                   >
-                    Camera openen
+                    Achtercamera openen
                   </button>
                 </div>
+              )}
+
+              {cameraMessage && (
+                <p style={{ textAlign: 'center', padding: '10px' }}>
+                  {cameraMessage}
+                </p>
               )}
             </section>
 
@@ -784,6 +904,11 @@ function Scanner({ user }) {
     </div>
   );
 }
+
+
+// ======================================================
+// UI HELPERS
+// ======================================================
 
 function Stat({ number, title }) {
   return (
@@ -833,6 +958,11 @@ function Center({ children }) {
   );
 }
 
+
+// ======================================================
+// TOKEN / QR PAYLOAD
+// ======================================================
+
 function createSecureToken() {
   return (
     crypto.randomUUID().replaceAll('-', '')
@@ -868,13 +998,14 @@ function parseTicketPayload(value) {
 
 
 // ======================================================
-// PDF TEMPLATE BACKGROUND
+// PDF/JPEG TEMPLATE
 // ======================================================
 
 const PDF_W = 210;
 const PDF_H = 98.82;
 
 let templateCache = null;
+let templateImageCache = null;
 
 async function loadTicketTemplate() {
   if (templateCache) {
@@ -894,8 +1025,7 @@ async function loadTicketTemplate() {
     );
   }
 
-  const blob =
-    await response.blob();
+  const blob = await response.blob();
 
   templateCache =
     await blobToDataUrl(
@@ -907,12 +1037,8 @@ async function loadTicketTemplate() {
 
 function blobToDataUrl(blob) {
   return new Promise(
-    (
-      resolve,
-      reject
-    ) => {
-      const reader =
-        new FileReader();
+    (resolve, reject) => {
+      const reader = new FileReader();
 
       reader.onload =
         () =>
@@ -930,10 +1056,34 @@ function blobToDataUrl(blob) {
   );
 }
 
-async function ticketPdf(
-  ticket,
-  settings
-) {
+async function loadHtmlImage(src) {
+  return new Promise(
+    (resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = reject;
+      image.src = src;
+    }
+  );
+}
+
+async function loadTemplateImage() {
+  if (templateImageCache) {
+    return templateImageCache;
+  }
+
+  const template = await loadTicketTemplate();
+  templateImageCache = await loadHtmlImage(template);
+
+  return templateImageCache;
+}
+
+
+// ======================================================
+// PDF
+// ======================================================
+
+async function ticketPdf(ticket, settings) {
   try {
     const pdf =
       new jsPDF({
@@ -958,18 +1108,13 @@ async function ticketPdf(
     console.error(error);
 
     window.alert(
-      'De ticket PDF kon niet worden gemaakt. Controleer public/ticket-template.png.'
+      'De ticket PDF kon niet worden gemaakt.'
     );
   }
 }
 
-async function batchPdf(
-  tickets,
-  settings
-) {
-  if (!tickets.length) {
-    return;
-  }
+async function batchPdf(tickets, settings) {
+  if (!tickets.length) return;
 
   try {
     const pdf =
@@ -1024,7 +1169,6 @@ async function drawTemplateTicket(
   const template =
     await loadTicketTemplate();
 
-  // Full luxury background
   pdf.addImage(
     template,
     'PNG',
@@ -1035,10 +1179,6 @@ async function drawTemplateTicket(
     undefined,
     'FAST'
   );
-
-  // ====================================================
-  // QR CODE
-  // ====================================================
 
   const qr =
     await QRCode.toDataURL(
@@ -1095,14 +1235,22 @@ async function drawTemplateTicket(
     qrSize
   );
 
-  // ====================================================
-  // TICKET NUMBER
-  // ====================================================
+  drawPdfTicketNumber(
+    pdf,
+    ticket
+  );
 
-  const ticketBoxX = 161.8;
-  const ticketBoxY = 70.2;
-  const ticketBoxW = 35.0;
-  const ticketBoxH = 14.5;
+  drawPdfGuestName(
+    pdf,
+    ticket
+  );
+}
+
+function drawPdfTicketNumber(pdf, ticket) {
+  const x = 161.8;
+  const y = 70.2;
+  const w = 35.0;
+  const h = 14.5;
 
   pdf.setFillColor(
     20,
@@ -1111,10 +1259,10 @@ async function drawTemplateTicket(
   );
 
   pdf.roundedRect(
-    ticketBoxX,
-    ticketBoxY,
-    ticketBoxW,
-    ticketBoxH,
+    x,
+    y,
+    w,
+    h,
     2,
     2,
     'F'
@@ -1131,10 +1279,10 @@ async function drawTemplateTicket(
   );
 
   pdf.roundedRect(
-    ticketBoxX + 1,
-    ticketBoxY + 1,
-    ticketBoxW - 2,
-    ticketBoxH - 2,
+    x + 1,
+    y + 1,
+    w - 2,
+    h - 2,
     1.5,
     1.5
   );
@@ -1156,12 +1304,8 @@ async function drawTemplateTicket(
 
   pdf.text(
     'TICKET NO.',
-    ticketBoxX
-      +
-      ticketBoxW / 2,
-    ticketBoxY
-      +
-      5.2,
+    x + w / 2,
+    y + 5.2,
     {
       align: 'center'
     }
@@ -1173,93 +1317,413 @@ async function drawTemplateTicket(
 
   pdf.text(
     ticket.ticketNumber,
-    ticketBoxX
-      +
-      ticketBoxW / 2,
-    ticketBoxY
-      +
-      11.3,
+    x + w / 2,
+    y + 11.3,
     {
       align: 'center'
     }
   );
+}
 
-  // ====================================================
-  // GUEST NAME - SAME BLACK & GOLD LOOK
-  // ====================================================
+function drawPdfGuestName(pdf, ticket) {
+  if (!ticket.guestName) return;
 
-  if (
-    ticket.guestName
-  ) {
-    const guestBoxX = 67;
-    const guestBoxY = 81.2;
-    const guestBoxW = 56;
-    const guestBoxH = 8.6;
+  const x = 67;
+  const y = 81.2;
+  const w = 56;
+  const h = 8.6;
 
-    // black plaque
-    pdf.setFillColor(
-      20,
-      18,
-      17
+  pdf.setFillColor(
+    20,
+    18,
+    17
+  );
+
+  pdf.roundedRect(
+    x,
+    y,
+    w,
+    h,
+    1.6,
+    1.6,
+    'F'
+  );
+
+  pdf.setDrawColor(
+    183,
+    137,
+    55
+  );
+
+  pdf.setLineWidth(
+    0.45
+  );
+
+  pdf.roundedRect(
+    x + 0.8,
+    y + 0.8,
+    w - 1.6,
+    h - 1.6,
+    1.2,
+    1.2
+  );
+
+  pdf.setTextColor(
+    229,
+    197,
+    124
+  );
+
+  pdf.setFont(
+    'times',
+    'bold'
+  );
+
+  pdf.setFontSize(
+    8.5
+  );
+
+  pdf.text(
+    ticket.guestName,
+    x + w / 2,
+    y + 5.6,
+    {
+      align: 'center'
+    }
+  );
+}
+
+
+// ======================================================
+// JPEG EXPORT
+// ======================================================
+
+async function ticketJpeg(ticket, settings) {
+  try {
+    const canvas =
+      await renderTicketToCanvas(
+        ticket,
+        settings
+      );
+
+    const dataUrl =
+      canvas.toDataURL(
+        'image/jpeg',
+        0.96
+      );
+
+    const link =
+      document.createElement('a');
+
+    link.href =
+      dataUrl;
+
+    link.download =
+      `${ticket.ticketNumber}.jpg`;
+
+    document.body.appendChild(
+      link
     );
 
-    pdf.roundedRect(
-      guestBoxX,
-      guestBoxY,
-      guestBoxW,
-      guestBoxH,
-      1.6,
-      1.6,
-      'F'
-    );
+    link.click();
 
-    // gold border
-    pdf.setDrawColor(
-      183,
-      137,
-      55
-    );
+    link.remove();
+  } catch (error) {
+    console.error(error);
 
-    pdf.setLineWidth(
-      0.45
-    );
-
-    pdf.roundedRect(
-      guestBoxX + 0.8,
-      guestBoxY + 0.8,
-      guestBoxW - 1.6,
-      guestBoxH - 1.6,
-      1.2,
-      1.2
-    );
-
-    // gold guest name
-    pdf.setTextColor(
-      229,
-      197,
-      124
-    );
-
-    pdf.setFont(
-      'times',
-      'bold'
-    );
-
-    pdf.setFontSize(
-      8.5
-    );
-
-    pdf.text(
-      ticket.guestName,
-      guestBoxX
-        +
-        guestBoxW / 2,
-      guestBoxY
-        +
-        5.6,
-      {
-        align: 'center'
-      }
+    window.alert(
+      'De JPEG kon niet worden gemaakt.'
     );
   }
+}
+
+async function renderTicketToCanvas(ticket, settings) {
+  const templateImage =
+    await loadTemplateImage();
+
+  const canvas =
+    document.createElement(
+      'canvas'
+    );
+
+  canvas.width =
+    templateImage.naturalWidth
+    ||
+    1768;
+
+  canvas.height =
+    templateImage.naturalHeight
+    ||
+    832;
+
+  const ctx =
+    canvas.getContext('2d');
+
+  ctx.drawImage(
+    templateImage,
+    0,
+    0,
+    canvas.width,
+    canvas.height
+  );
+
+  const mmX =
+    canvas.width / PDF_W;
+
+  const mmY =
+    canvas.height / PDF_H;
+
+  const qrDataUrl =
+    await QRCode.toDataURL(
+      createTicketPayload(
+        ticket
+      ),
+      {
+        errorCorrectionLevel:
+          'H',
+        margin:
+          1,
+        width:
+          1200,
+        color: {
+          dark:
+            '#000000',
+          light:
+            '#FFFFFF'
+        }
+      }
+    );
+
+  const qrImage =
+    await loadHtmlImage(
+      qrDataUrl
+    );
+
+  const qrX =
+    164.0;
+
+  const qrY =
+    23.4;
+
+  const qrSize =
+    29.8;
+
+  drawRoundedRectCanvas(
+    ctx,
+    (qrX - 1.7) * mmX,
+    (qrY - 1.7) * mmY,
+    (qrSize + 3.4) * mmX,
+    (qrSize + 3.4) * mmY,
+    2 * mmX,
+    '#ffffff',
+    '#b38530',
+    Math.max(2, 0.55 * mmX)
+  );
+
+  ctx.drawImage(
+    qrImage,
+    qrX * mmX,
+    qrY * mmY,
+    qrSize * mmX,
+    qrSize * mmY
+  );
+
+  drawCanvasTicketNumber(
+    ctx,
+    ticket,
+    mmX,
+    mmY
+  );
+
+  drawCanvasGuestName(
+    ctx,
+    ticket,
+    mmX,
+    mmY
+  );
+
+  return canvas;
+}
+
+function drawCanvasTicketNumber(
+  ctx,
+  ticket,
+  mmX,
+  mmY
+) {
+  const x = 161.8 * mmX;
+  const y = 70.2 * mmY;
+  const w = 35.0 * mmX;
+  const h = 14.5 * mmY;
+
+  drawRoundedRectCanvas(
+    ctx,
+    x,
+    y,
+    w,
+    h,
+    2 * mmX,
+    '#141211',
+    '#b78937',
+    Math.max(2, 0.55 * mmX)
+  );
+
+  ctx.textAlign =
+    'center';
+
+  ctx.textBaseline =
+    'middle';
+
+  ctx.fillStyle =
+    '#e5c57c';
+
+  ctx.font =
+    `bold ${Math.round(18 * mmY)}px Georgia, serif`;
+
+  ctx.fillText(
+    'TICKET NO.',
+    x + w / 2,
+    y + h * 0.34
+  );
+
+  ctx.font =
+    `bold ${Math.round(37 * mmY)}px Georgia, serif`;
+
+  ctx.fillText(
+    ticket.ticketNumber,
+    x + w / 2,
+    y + h * 0.70
+  );
+}
+
+function drawCanvasGuestName(
+  ctx,
+  ticket,
+  mmX,
+  mmY
+) {
+  if (!ticket.guestName) return;
+
+  const x = 67 * mmX;
+  const y = 81.2 * mmY;
+  const w = 56 * mmX;
+  const h = 8.6 * mmY;
+
+  drawRoundedRectCanvas(
+    ctx,
+    x,
+    y,
+    w,
+    h,
+    1.6 * mmX,
+    '#141211',
+    '#b78937',
+    Math.max(2, 0.45 * mmX)
+  );
+
+  ctx.textAlign =
+    'center';
+
+  ctx.textBaseline =
+    'middle';
+
+  ctx.fillStyle =
+    '#e5c57c';
+
+  ctx.font =
+    `bold ${Math.round(27 * mmY)}px Georgia, serif`;
+
+  ctx.fillText(
+    ticket.guestName,
+    x + w / 2,
+    y + h / 2
+  );
+}
+
+function drawRoundedRectCanvas(
+  ctx,
+  x,
+  y,
+  width,
+  height,
+  radius,
+  fill,
+  stroke,
+  lineWidth
+) {
+  const r = Math.min(
+    radius,
+    width / 2,
+    height / 2
+  );
+
+  ctx.beginPath();
+
+  ctx.moveTo(
+    x + r,
+    y
+  );
+
+  ctx.lineTo(
+    x + width - r,
+    y
+  );
+
+  ctx.quadraticCurveTo(
+    x + width,
+    y,
+    x + width,
+    y + r
+  );
+
+  ctx.lineTo(
+    x + width,
+    y + height - r
+  );
+
+  ctx.quadraticCurveTo(
+    x + width,
+    y + height,
+    x + width - r,
+    y + height
+  );
+
+  ctx.lineTo(
+    x + r,
+    y + height
+  );
+
+  ctx.quadraticCurveTo(
+    x,
+    y + height,
+    x,
+    y + height - r
+  );
+
+  ctx.lineTo(
+    x,
+    y + r
+  );
+
+  ctx.quadraticCurveTo(
+    x,
+    y,
+    x + r,
+    y
+  );
+
+  ctx.closePath();
+
+  ctx.fillStyle =
+    fill;
+
+  ctx.fill();
+
+  ctx.strokeStyle =
+    stroke;
+
+  ctx.lineWidth =
+    lineWidth;
+
+  ctx.stroke();
 }
