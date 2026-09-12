@@ -221,7 +221,7 @@ function Admin() {
 
       const quantity = Math.max(
         1,
-        Math.min(Number(count) || 1, 50)
+        Math.min(Number(count) || 1, 200)
       );
 
       const maximum = Number(
@@ -368,7 +368,7 @@ function Admin() {
               <input
                 type="number"
                 min="1"
-                max="50"
+                max="200"
                 value={count}
                 onChange={(event) => setCount(event.target.value)}
               />
