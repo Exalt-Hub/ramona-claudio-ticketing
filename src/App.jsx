@@ -14,7 +14,8 @@ import {
   serverTimestamp,
   setDoc,
   updateDoc,
-  where
+  where,
+  writeBatch
 } from 'firebase/firestore';
 
 import {
@@ -306,6 +307,56 @@ function Admin() {
     }
   }
 
+
+  async function deleteAllTickets() {
+    if (!tickets.length) {
+      window.alert('Er zijn geen tickets om te verwijderen.');
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Weet je zeker dat je ALLE ${tickets.length} tickets wilt verwijderen? Dit kan niet ongedaan worden gemaakt.`
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    const secondConfirm = window.confirm(
+      'Laatste controle: echt alle tickets verwijderen?'
+    );
+
+    if (!secondConfirm) {
+      return;
+    }
+
+    try {
+      const batch = writeBatch(db);
+
+      tickets.forEach((ticket) => {
+        batch.delete(
+          doc(
+            db,
+            'rc_event_tickets',
+            ticket.id
+          )
+        );
+      });
+
+      await batch.commit();
+
+      setMessage(
+        `${tickets.length} tickets zijn verwijderd.`
+      );
+    } catch (error) {
+      console.error(error);
+
+      window.alert(
+        'Niet alle tickets konden worden verwijderd.'
+      );
+    }
+  }
+
   async function toggleBlock(ticket) {
     try {
       await updateDoc(
@@ -419,9 +470,22 @@ function Admin() {
               <p>Limiet: {settings.maxTickets || EVENT.maxTickets}</p>
             </div>
 
-            <a className="btn" href="/scanner">
-              Open scanner
-            </a>
+            <div style={{ display: 'flex', gap: '10px', flexWrap: 'wrap' }}>
+              <button
+                className="btn danger"
+                onClick={deleteAllTickets}
+                style={{
+                  background: '#8f2424',
+                  color: '#fff'
+                }}
+              >
+                Verwijder alle tickets
+              </button>
+
+              <a className="btn" href="/scanner">
+                Open scanner
+              </a>
+            </div>
           </div>
 
           <div className="table">
