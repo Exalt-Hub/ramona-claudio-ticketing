@@ -269,10 +269,7 @@ function Admin() {
             scannedAt: null,
             scannedBy: null,
             createdAt: serverTimestamp(),
-            guestName:
-              quantity === 1
-                ? guestName.trim()
-                : '',
+            guestName: guestName.trim(),
             eventId: EVENT.id,
             ticketType: 'standard'
           }
