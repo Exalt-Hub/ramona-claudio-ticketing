@@ -631,6 +631,27 @@ function Scanner({ user }) {
         () => {}
       );
 
+      requestAnimationFrame(() => {
+        const reader = document.getElementById('qr-reader');
+        const video = reader?.querySelector('video');
+
+        if (reader) {
+          reader.style.width = '100%';
+          reader.style.minHeight = '420px';
+          reader.style.display = 'block';
+        }
+
+        if (video) {
+          video.style.display = 'block';
+          video.style.width = '100%';
+          video.style.height = '420px';
+          video.style.objectFit = 'cover';
+          video.style.borderRadius = '20px';
+          video.setAttribute('playsinline', 'true');
+          video.muted = true;
+        }
+      });
+
       setCameraMessage(
         rearCamera?.label
           ? `Camera actief: ${rearCamera.label}`
@@ -668,6 +689,27 @@ function Scanner({ user }) {
           },
           () => {}
         );
+
+        requestAnimationFrame(() => {
+          const reader = document.getElementById('qr-reader');
+          const video = reader?.querySelector('video');
+
+          if (reader) {
+            reader.style.width = '100%';
+            reader.style.minHeight = '420px';
+            reader.style.display = 'block';
+          }
+
+          if (video) {
+            video.style.display = 'block';
+            video.style.width = '100%';
+            video.style.height = '420px';
+            video.style.objectFit = 'cover';
+            video.style.borderRadius = '20px';
+            video.setAttribute('playsinline', 'true');
+            video.muted = true;
+          }
+        });
 
         setCameraMessage('Achtercamera actief');
       } catch (fallbackError) {
@@ -911,8 +953,24 @@ function Scanner({ user }) {
           </div>
         ) : (
           <>
-            <section className="scanner">
-              <div id="qr-reader" />
+            <section
+                className="scanner"
+                style={{
+                  display: 'block',
+                  minHeight: '420px',
+                  overflow: 'hidden',
+                  position: 'relative'
+                }}
+              >
+              <div
+                  id="qr-reader"
+                  style={{
+                    width: '100%',
+                    minHeight: '420px',
+                    overflow: 'hidden',
+                    borderRadius: '20px'
+                  }}
+                />
 
               {!cameraActive && (
                 <div className="placeholder">
