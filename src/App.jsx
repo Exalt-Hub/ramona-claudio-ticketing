@@ -551,12 +551,31 @@ function Scanner({ user }) {
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraMessage, setCameraMessage] = useState('');
   const scannerRef = useRef(null);
+  const processingRef = useRef(false);
+  const lastScanRef = useRef({
+    text: '',
+    time: 0
+  });
 
   useEffect(() => {
     return () => {
       stopCamera();
     };
   }, []);
+
+  useEffect(() => {
+    if (!result || !cameraActive) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setResult(null);
+    }, 1800);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [result, cameraActive]);
 
   async function startCamera() {
     setResult(null);
@@ -625,8 +644,34 @@ function Scanner({ user }) {
           aspectRatio: 1
         },
         async (decodedText) => {
-          await stopCamera();
-          await processQr(decodedText);
+          const now = Date.now();
+
+          if (
+            processingRef.current
+            ||
+            (
+              lastScanRef.current.text === decodedText
+              &&
+              now - lastScanRef.current.time < 3500
+            )
+          ) {
+            return;
+          }
+
+          processingRef.current = true;
+
+          lastScanRef.current = {
+            text: decodedText,
+            time: now
+          };
+
+          try {
+            await processQr(decodedText);
+          } finally {
+            window.setTimeout(() => {
+              processingRef.current = false;
+            }, 900);
+          }
         },
         () => {}
       );
@@ -684,9 +729,35 @@ function Scanner({ user }) {
             }
           },
           async (decodedText) => {
-            await stopCamera();
+          const now = Date.now();
+
+          if (
+            processingRef.current
+            ||
+            (
+              lastScanRef.current.text === decodedText
+              &&
+              now - lastScanRef.current.time < 3500
+            )
+          ) {
+            return;
+          }
+
+          processingRef.current = true;
+
+          lastScanRef.current = {
+            text: decodedText,
+            time: now
+          };
+
+          try {
             await processQr(decodedText);
-          },
+          } finally {
+            window.setTimeout(() => {
+              processingRef.current = false;
+            }, 900);
+          }
+        },
           () => {}
         );
 
@@ -747,6 +818,8 @@ function Scanner({ user }) {
   }
 
   async function processQr(raw) {
+    setResult(null);
+
     const parsed = parseTicketPayload(raw);
 
     if (!parsed) {
@@ -927,9 +1000,25 @@ function Scanner({ user }) {
       </header>
 
       <main className="scanmain">
-        {result ? (
-          <div className={`result ${result.type}`}>
-            <div>
+
+        {result && (
+          <div
+            className={`result ${result.type}`}
+            style={{
+              minHeight: 'auto',
+              padding: '18px',
+              marginBottom: '14px',
+              borderRadius: '18px'
+            }}
+          >
+            <div
+              style={{
+                width: '54px',
+                height: '54px',
+                fontSize: '32px',
+                borderWidth: '3px'
+              }}
+            >
               {
                 result.type === 'ok'
                   ? '✓'
@@ -939,86 +1028,98 @@ function Scanner({ user }) {
               }
             </div>
 
-            <h2>{result.title}</h2>
-            <p>{result.message}</p>
+            <h2
+              style={{
+                fontSize: '24px',
+                margin: '10px 0 4px'
+              }}
+            >
+              {result.title}
+            </h2>
+
+            <p
+              style={{
+                fontSize: '18px',
+                margin: 0
+              }}
+            >
+              {result.message}
+            </p>
+          </div>
+        )}
+
+        <section
+          className="scanner"
+          style={{
+            display: 'block',
+            minHeight: '420px',
+            overflow: 'hidden',
+            position: 'relative'
+          }}
+        >
+          <div
+            id="qr-reader"
+            style={{
+              width: '100%',
+              minHeight: '420px',
+              overflow: 'hidden',
+              borderRadius: '20px'
+            }}
+          />
+
+          {!cameraActive && (
+            <div className="placeholder">
+              <h2>Scan ticket</h2>
+
+              <p>
+                Open de camera en richt op de QR-code.
+              </p>
+
+              <button
+                className="btn"
+                onClick={startCamera}
+              >
+                Achtercamera openen
+              </button>
+            </div>
+          )}
+
+          {cameraMessage && cameraActive && (
+            <p
+              style={{
+                textAlign: 'center',
+                padding: '10px',
+                margin: 0
+              }}
+            >
+              {cameraMessage}
+            </p>
+          )}
+        </section>
+
+        <section className="manual">
+          <h3>Handmatige controle</h3>
+
+          <div>
+            <input
+              value={manualTicket}
+              onChange={(event) =>
+                setManualTicket(
+                  event.target.value
+                )
+              }
+              placeholder="RC-0001"
+            />
 
             <button
-              className="btn light"
-              onClick={() =>
-                setResult(null)
-              }
+              className="btn"
+              onClick={manualCheck}
             >
-              Volgende ticket
+              Controleer
             </button>
           </div>
-        ) : (
-          <>
-            <section
-                className="scanner"
-                style={{
-                  display: 'block',
-                  minHeight: '420px',
-                  overflow: 'hidden',
-                  position: 'relative'
-                }}
-              >
-              <div
-                  id="qr-reader"
-                  style={{
-                    width: '100%',
-                    minHeight: '420px',
-                    overflow: 'hidden',
-                    borderRadius: '20px'
-                  }}
-                />
+        </section>
 
-              {!cameraActive && (
-                <div className="placeholder">
-                  <h2>Scan ticket</h2>
-                  <p>
-                    Open de camera en richt op de QR-code.
-                  </p>
-
-                  <button
-                    className="btn"
-                    onClick={startCamera}
-                  >
-                    Achtercamera openen
-                  </button>
-                </div>
-              )}
-
-              {cameraMessage && (
-                <p style={{ textAlign: 'center', padding: '10px' }}>
-                  {cameraMessage}
-                </p>
-              )}
-            </section>
-
-            <section className="manual">
-              <h3>Handmatige controle</h3>
-
-              <div>
-                <input
-                  value={manualTicket}
-                  onChange={(event) =>
-                    setManualTicket(
-                      event.target.value
-                    )
-                  }
-                  placeholder="RC-0001"
-                />
-
-                <button
-                  className="btn"
-                  onClick={manualCheck}
-                >
-                  Controleer
-                </button>
-              </div>
-            </section>
-          </>
-        )}
       </main>
     </div>
   );
