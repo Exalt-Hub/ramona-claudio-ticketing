@@ -968,19 +968,87 @@ function Scanner({ user }) {
     const ticketNumber =
       manualTicket
         .trim()
-        .toUpperCase();
+        .toUpperCase()
+        .replace(/\s+/g, '');
 
-    if (!ticketNumber) return;
+    if (!ticketNumber) {
+      setResult({
+        type: 'warn',
+        title: 'VUL EEN TICKETNUMMER IN',
+        message: 'Bijvoorbeeld RC-0001'
+      });
 
-    await validateTicket(
-      doc(
+      return;
+    }
+
+    try {
+      setResult(null);
+
+      // Eerst rechtstreeks zoeken op document-ID.
+      const directRef = doc(
         db,
         'rc_event_tickets',
         ticketNumber
-      )
-    );
+      );
 
-    setManualTicket('');
+      const directSnapshot = await getDoc(
+        directRef
+      );
+
+      if (directSnapshot.exists()) {
+        await validateTicket(
+          directRef
+        );
+
+        setManualTicket('');
+        return;
+      }
+
+      // Fallback: zoeken op het veld ticketNumber.
+      const snapshot = await getDocs(
+        query(
+          collection(
+            db,
+            'rc_event_tickets'
+          ),
+          where(
+            'ticketNumber',
+            '==',
+            ticketNumber
+          ),
+          limit(1)
+        )
+      );
+
+      if (snapshot.empty) {
+        setResult({
+          type: 'bad',
+          title: 'TICKET NIET GEVONDEN',
+          message: ticketNumber
+        });
+
+        return;
+      }
+
+      await validateTicket(
+        snapshot.docs[0].ref
+      );
+
+      setManualTicket('');
+
+    } catch (error) {
+      console.error(
+        'Handmatige controle mislukt:',
+        error
+      );
+
+      setResult({
+        type: 'bad',
+        title: 'CONTROLE MISLUKT',
+        message:
+          'Controleer internetverbinding en Firebase-regels.'
+      });
+    }
   }
 
   return (
