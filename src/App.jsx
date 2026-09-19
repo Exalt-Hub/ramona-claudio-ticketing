@@ -557,17 +557,13 @@ function Scanner({ user }) {
     time: 0
   });
 
-  // Externe USB/Bluetooth HID scanner (bijv. Eyoyo EY-H2)
-  const usbBufferRef = useRef('');
-  const usbLastKeyTimeRef = useRef(0);
-  const usbTimerRef = useRef(null);
-  const usbProcessingRef = useRef(false);
-  const usbInputRef = useRef(null);
-
-  const [usbScannerMessage, setUsbScannerMessage] = useState(
-    'Externe scanner gereed'
-  );
-  const [usbInputValue, setUsbInputValue] = useState('');
+  // Externe HID-scanner (Eyoyo EY-H2)
+  const hidBufferRef = useRef('');
+  const hidTimerRef = useRef(null);
+  const hidBusyRef = useRef(false);
+  const hidLastKeyTimeRef = useRef(0);
+  const [hidStatus, setHidStatus] = useState('Klaar om te scannen');
+  const [hidLastScan, setHidLastScan] = useState('');
 
   useEffect(() => {
     return () => {
@@ -590,154 +586,181 @@ function Scanner({ user }) {
   }, [result, cameraActive]);
 
   // ------------------------------------------------------
-  // EXTERNE BARCODE / QR SCANNER
+  // EYOYO EY-H2 / EXTERNE HID SCANNER
   // ------------------------------------------------------
-  // De Eyoyo werkt in HID-keyboard modus. Daarom houden we
-  // een speciaal invoerveld actief zolang deze browserpagina
-  // op de voorgrond staat.
-  async function processExternalScannerValue(rawValue) {
-    const value = String(rawValue || '').trim();
+  useEffect(() => {
+    async function processHidValue(rawValue) {
+      const value = String(rawValue || '')
+        .replace(/[\r\n\t]/g, '')
+        .trim();
 
-    if (!value || usbProcessingRef.current) {
-      return;
+      if (!value || hidBusyRef.current) {
+        return;
+      }
+
+      const upper = value.toUpperCase();
+      const isFullQr = upper.startsWith('RC-EVENT|');
+      const isTicketOnly = /^RC-\d{4,}$/.test(upper);
+
+      // Alleen tickets van dit systeem verwerken.
+      if (!isFullQr && !isTicketOnly) {
+        setHidStatus('Klaar om te scannen');
+        return;
+      }
+
+      hidBusyRef.current = true;
+      setHidStatus('Ticket controleren...');
+
+      setHidLastScan(
+        isFullQr
+          ? upper.split('|')[1] || 'QR-ticket'
+          : upper
+      );
+
+      try {
+        if (isFullQr) {
+          await processQr(value);
+        } else {
+          const ticketRef = doc(
+            db,
+            'rc_event_tickets',
+            upper
+          );
+
+          const directSnapshot = await getDoc(ticketRef);
+
+          if (directSnapshot.exists()) {
+            await validateTicket(ticketRef);
+          } else {
+            const snapshot = await getDocs(
+              query(
+                collection(db, 'rc_event_tickets'),
+                where('ticketNumber', '==', upper),
+                limit(1)
+              )
+            );
+
+            if (snapshot.empty) {
+              setResult({
+                type: 'bad',
+                title: 'TICKET NIET GEVONDEN',
+                message: upper
+              });
+            } else {
+              await validateTicket(snapshot.docs[0].ref);
+            }
+          }
+        }
+      } catch (error) {
+        console.error('Eyoyo scan fout:', error);
+
+        setResult({
+          type: 'bad',
+          title: 'EYOYO SCAN MISLUKT',
+          message: 'Probeer het ticket opnieuw te scannen.'
+        });
+      } finally {
+        setHidStatus('Klaar om te scannen');
+
+        window.setTimeout(() => {
+          hidBusyRef.current = false;
+        }, 450);
+      }
     }
 
-    usbProcessingRef.current = true;
-    setUsbScannerMessage('Scan verwerken...');
-
-    try {
-      if (value.startsWith('RC-EVENT|')) {
-        await processQr(value);
-      } else {
-        const ticketNumber = value
-          .toUpperCase()
-          .replace(/\s+/g, '');
-
-        if (/^RC-\d{4,}$/.test(ticketNumber)) {
-          await validateTicket(
-            doc(
-              db,
-              'rc_event_tickets',
-              ticketNumber
-            )
-          );
-        } else {
-          setResult({
-            type: 'bad',
-            title: 'ONGELDIGE EXTERNE SCAN',
-            message: value
-          });
-        }
+    function flushHidBuffer() {
+      if (hidTimerRef.current) {
+        window.clearTimeout(hidTimerRef.current);
+        hidTimerRef.current = null;
       }
-    } catch (error) {
-      console.error('Externe scanner fout:', error);
 
-      setResult({
-        type: 'bad',
-        title: 'EXTERNE SCAN MISLUKT',
-        message: 'Probeer het ticket opnieuw te scannen.'
-      });
-    } finally {
-      setUsbInputValue('');
-      setUsbScannerMessage('Externe scanner gereed');
+      const value = hidBufferRef.current;
+      hidBufferRef.current = '';
 
-      window.setTimeout(() => {
-        usbProcessingRef.current = false;
+      if (value) {
+        processHidValue(value);
+      }
+    }
+
+    function handleHidKeyDown(event) {
+      if (
+        event.ctrlKey
+        || event.altKey
+        || event.metaKey
+      ) {
+        return;
+      }
+
+      const now = Date.now();
+
+      if (now - hidLastKeyTimeRef.current > 500) {
+        hidBufferRef.current = '';
+      }
+
+      hidLastKeyTimeRef.current = now;
+
+      if (
+        event.key === 'Enter'
+        || event.key === 'Tab'
+      ) {
+        const candidate = hidBufferRef.current
+          .replace(/[\r\n\t]/g, '')
+          .trim()
+          .toUpperCase();
 
         if (
-          document.visibilityState === 'visible'
-          && usbInputRef.current
+          candidate.startsWith('RC-EVENT|')
+          || /^RC-\d{4,}$/.test(candidate)
         ) {
-          usbInputRef.current.focus();
+          event.preventDefault();
+          event.stopPropagation();
+          flushHidBuffer();
         }
-      }, 350);
-    }
-  }
 
-  function handleUsbInputKeyDown(event) {
-    if (
-      event.key === 'Enter'
-      || event.key === 'Tab'
-    ) {
-      event.preventDefault();
-
-      const value = event.currentTarget.value;
-
-      if (value.trim()) {
-        processExternalScannerValue(value);
+        return;
       }
 
-      return;
-    }
-  }
-
-  function handleUsbInputChange(event) {
-    const value = event.target.value;
-
-    setUsbInputValue(value);
-    setUsbScannerMessage(
-      value
-        ? 'Externe scanner leest...'
-        : 'Externe scanner gereed'
-    );
-
-    // Fallback voor scannerinstellingen zonder Enter/CR suffix.
-    if (usbTimerRef.current) {
-      window.clearTimeout(usbTimerRef.current);
-    }
-
-    usbTimerRef.current = window.setTimeout(() => {
-      const currentValue =
-        usbInputRef.current?.value || '';
-
-      if (currentValue.trim()) {
-        processExternalScannerValue(currentValue);
+      if (event.key.length !== 1) {
+        return;
       }
-    }, 220);
-  }
 
-  useEffect(() => {
-    function focusUsbScanner() {
+      hidBufferRef.current += event.key;
+
+      const current = hidBufferRef.current.toUpperCase();
+
       if (
-        document.visibilityState === 'visible'
-        && usbInputRef.current
+        current.startsWith('RC-')
+        || current.startsWith('RC-EVENT|')
       ) {
-        usbInputRef.current.focus();
+        setHidStatus('Eyoyo leest ticket...');
       }
+
+      if (hidTimerRef.current) {
+        window.clearTimeout(hidTimerRef.current);
+      }
+
+      // Werkt ook wanneer de Eyoyo geen Enter/CR meestuurt.
+      hidTimerRef.current = window.setTimeout(
+        flushHidBuffer,
+        140
+      );
     }
-
-    const focusTimer = window.setTimeout(
-      focusUsbScanner,
-      300
-    );
-
-    window.addEventListener(
-      'focus',
-      focusUsbScanner
-    );
 
     document.addEventListener(
-      'visibilitychange',
-      focusUsbScanner
+      'keydown',
+      handleHidKeyDown,
+      true
     );
 
     return () => {
-      window.clearTimeout(focusTimer);
-
-      window.removeEventListener(
-        'focus',
-        focusUsbScanner
-      );
-
       document.removeEventListener(
-        'visibilitychange',
-        focusUsbScanner
+        'keydown',
+        handleHidKeyDown,
+        true
       );
 
-      if (usbTimerRef.current) {
-        window.clearTimeout(
-          usbTimerRef.current
-        );
+      if (hidTimerRef.current) {
+        window.clearTimeout(hidTimerRef.current);
       }
     };
   }, []);
@@ -1336,63 +1359,58 @@ function Scanner({ user }) {
             marginTop: '16px',
             border: '1px solid rgba(183, 137, 55, .45)'
           }}
-          onClick={() => {
-            usbInputRef.current?.focus();
-          }}
         >
-          <h3>Eyoyo / externe scanner</h3>
+          <h3>Eyoyo EY-H2 scanner</h3>
 
           <p
             style={{
-              margin: '6px 0 10px',
+              margin: '6px 0 12px',
               color: '#74665f'
             }}
           >
-            Houd deze browserpagina op de voorgrond. De scanner typt
-            namelijk in het programma dat op dat moment actief is.
+            Laat deze Gate Scanner-pagina actief staan en scan direct.
+            Je hoeft nergens in te klikken.
           </p>
-
-          <input
-            ref={usbInputRef}
-            value={usbInputValue}
-            onChange={handleUsbInputChange}
-            onKeyDown={handleUsbInputKeyDown}
-            autoFocus
-            autoComplete="off"
-            spellCheck="false"
-            inputMode="none"
-            placeholder="Scan hier met Eyoyo..."
-            style={{
-              width: '100%',
-              boxSizing: 'border-box',
-              padding: '14px 16px',
-              marginBottom: '10px',
-              borderRadius: '12px',
-              border: '1px solid rgba(183, 137, 55, .6)',
-              fontSize: '18px'
-            }}
-          />
 
           <div
             style={{
               display: 'flex',
               alignItems: 'center',
-              gap: '10px'
+              gap: '10px',
+              padding: '12px 14px',
+              borderRadius: '12px',
+              background: '#f6f1eb'
             }}
           >
             <span
               style={{
-                width: '10px',
-                height: '10px',
+                width: '11px',
+                height: '11px',
                 borderRadius: '50%',
-                background: '#2f9d5d',
-                display: 'inline-block'
+                background:
+                  hidStatus === 'Ticket controleren...'
+                    ? '#d49a32'
+                    : '#2f9d5d',
+                display: 'inline-block',
+                flexShrink: 0
               }}
             />
 
-            <strong>
-              {usbScannerMessage}
-            </strong>
+            <div>
+              <strong>{hidStatus}</strong>
+
+              {hidLastScan && (
+                <div
+                  style={{
+                    marginTop: '3px',
+                    fontSize: '14px',
+                    opacity: 0.7
+                  }}
+                >
+                  Laatste scan: {hidLastScan}
+                </div>
+              )}
+            </div>
           </div>
         </section>
 
