@@ -557,6 +557,16 @@ function Scanner({ user }) {
     time: 0
   });
 
+  // Externe USB/Bluetooth HID scanner (bijv. Eyoyo EY-H2)
+  const usbBufferRef = useRef('');
+  const usbLastKeyTimeRef = useRef(0);
+  const usbTimerRef = useRef(null);
+  const usbProcessingRef = useRef(false);
+
+  const [usbScannerMessage, setUsbScannerMessage] = useState(
+    'Externe scanner gereed'
+  );
+
   useEffect(() => {
     return () => {
       stopCamera();
@@ -576,6 +586,173 @@ function Scanner({ user }) {
       window.clearTimeout(timer);
     };
   }, [result, cameraActive]);
+
+  // ------------------------------------------------------
+  // EXTERNE BARCODE / QR SCANNER
+  // ------------------------------------------------------
+  // De Eyoyo werkt in HID-keyboard modus alsof hij tekst typt.
+  // We vangen de gescande tekst globaal op en verwerken hem
+  // bij Enter/Tab of kort nadat de scanner klaar is met typen.
+  useEffect(() => {
+    async function handleExternalScan(rawValue) {
+      const value = String(rawValue || '').trim();
+
+      if (!value || usbProcessingRef.current) {
+        return;
+      }
+
+      usbProcessingRef.current = true;
+      setUsbScannerMessage('Scan verwerken...');
+
+      try {
+        // Onze QR-code bevat: RC-EVENT|RC-0001|TOKEN
+        if (value.startsWith('RC-EVENT|')) {
+          await processQr(value);
+        } else {
+          // Ook RC-0001 rechtstreeks accepteren.
+          const ticketNumber = value
+            .toUpperCase()
+            .replace(/\s+/g, '');
+
+          if (/^RC-\d{4,}$/.test(ticketNumber)) {
+            await validateTicket(
+              doc(
+                db,
+                'rc_event_tickets',
+                ticketNumber
+              )
+            );
+          } else {
+            setResult({
+              type: 'bad',
+              title: 'ONGELDIGE EXTERNE SCAN',
+              message: value
+            });
+          }
+        }
+      } catch (error) {
+        console.error('Externe scanner fout:', error);
+
+        setResult({
+          type: 'bad',
+          title: 'EXTERNE SCAN MISLUKT',
+          message: 'Probeer het ticket opnieuw te scannen.'
+        });
+      } finally {
+        setUsbScannerMessage('Externe scanner gereed');
+
+        window.setTimeout(() => {
+          usbProcessingRef.current = false;
+        }, 500);
+      }
+    }
+
+    function finishBuffer() {
+      if (usbTimerRef.current) {
+        window.clearTimeout(
+          usbTimerRef.current
+        );
+
+        usbTimerRef.current = null;
+      }
+
+      const value =
+        usbBufferRef.current;
+
+      usbBufferRef.current = '';
+
+      if (value) {
+        handleExternalScan(value);
+      }
+    }
+
+    function onKeyDown(event) {
+      const targetTag =
+        event.target?.tagName?.toLowerCase();
+
+      // Handmatig invoerveld moet normaal blijven werken.
+      if (
+        targetTag === 'input'
+        ||
+        targetTag === 'textarea'
+        ||
+        event.ctrlKey
+        ||
+        event.altKey
+        ||
+        event.metaKey
+      ) {
+        return;
+      }
+
+      const now = Date.now();
+
+      // Scanner-input is normaal erg snel.
+      // Na een lange pauze beginnen we een nieuwe buffer.
+      if (
+        now - usbLastKeyTimeRef.current > 300
+      ) {
+        usbBufferRef.current = '';
+      }
+
+      usbLastKeyTimeRef.current = now;
+
+      if (
+        event.key === 'Enter'
+        ||
+        event.key === 'Tab'
+      ) {
+        if (usbBufferRef.current) {
+          event.preventDefault();
+          finishBuffer();
+        }
+
+        return;
+      }
+
+      if (
+        event.key.length === 1
+      ) {
+        usbBufferRef.current +=
+          event.key;
+
+        setUsbScannerMessage(
+          'Externe scanner leest...'
+        );
+
+        // Fallback voor scanners zonder Enter-suffix.
+        if (usbTimerRef.current) {
+          window.clearTimeout(
+            usbTimerRef.current
+          );
+        }
+
+        usbTimerRef.current =
+          window.setTimeout(
+            finishBuffer,
+            180
+          );
+      }
+    }
+
+    document.addEventListener(
+      'keydown',
+      onKeyDown
+    );
+
+    return () => {
+      document.removeEventListener(
+        'keydown',
+        onKeyDown
+      );
+
+      if (usbTimerRef.current) {
+        window.clearTimeout(
+          usbTimerRef.current
+        );
+      }
+    };
+  }, []);
 
   async function startCamera() {
     setResult(null);
@@ -1163,6 +1340,50 @@ function Scanner({ user }) {
               {cameraMessage}
             </p>
           )}
+        </section>
+
+        <section
+          className="manual"
+          style={{
+            marginTop: '16px',
+            border: '1px solid rgba(183, 137, 55, .45)'
+          }}
+        >
+          <h3>Eyoyo / externe scanner</h3>
+
+          <p
+            style={{
+              margin: '6px 0 10px',
+              color: '#74665f'
+            }}
+          >
+            Sluit de scanner aan in HID/keyboard-modus en scan direct.
+            Je hoeft hier niet te klikken.
+          </p>
+
+          <div
+            style={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px'
+            }}
+          >
+            <span
+              style={{
+                width: '10px',
+                height: '10px',
+                borderRadius: '50%',
+                background: usbProcessingRef.current
+                  ? '#d49a32'
+                  : '#2f9d5d',
+                display: 'inline-block'
+              }}
+            />
+
+            <strong>
+              {usbScannerMessage}
+            </strong>
+          </div>
         </section>
 
         <section className="manual">
