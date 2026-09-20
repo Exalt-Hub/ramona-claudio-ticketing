@@ -221,10 +221,10 @@ function Admin() {
     };
   }, []);
 
-  const used = tickets.filter((ticket) => ticket.status === 'used').length;
+  const used = tickets.filter((ticket) => ['used', 'Binnen'].includes(ticket.status)).length;
   const blocked = tickets.filter((ticket) => ticket.blocked === true).length;
   const unused = tickets.filter(
-    (ticket) => ticket.status !== 'used' && !ticket.blocked
+    (ticket) => !['used', 'Binnen'].includes(ticket.status) && !ticket.blocked
   ).length;
 
   async function generateTickets() {
@@ -564,6 +564,7 @@ function Scanner({ user }) {
   const hidLastKeyTimeRef = useRef(0);
   const [hidStatus, setHidStatus] = useState('Klaar om te scannen');
   const [hidLastScan, setHidLastScan] = useState('');
+  const [scanLight, setScanLight] = useState('idle');
 
   useEffect(() => {
     return () => {
@@ -572,18 +573,32 @@ function Scanner({ user }) {
   }, []);
 
   useEffect(() => {
-    if (!result || !cameraActive) {
+    if (!result) {
       return undefined;
     }
 
     const timer = window.setTimeout(() => {
       setResult(null);
-    }, 1800);
+    }, 2200);
 
     return () => {
       window.clearTimeout(timer);
     };
-  }, [result, cameraActive]);
+  }, [result]);
+
+  useEffect(() => {
+    if (scanLight === 'idle') {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      setScanLight('idle');
+    }, 2200);
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [scanLight]);
 
   // ------------------------------------------------------
   // EYOYO EY-H2 / EXTERNE HID SCANNER
@@ -1075,7 +1090,7 @@ function Scanner({ user }) {
             };
           }
 
-          if (data.status === 'used') {
+          if (['used', 'Binnen'].includes(data.status)) {
             return {
               code: 'used',
               data
@@ -1085,7 +1100,7 @@ function Scanner({ user }) {
           transaction.update(
             ticketRef,
             {
-              status: 'used',
+              status: 'Binnen',
               scannedAt: serverTimestamp(),
               scannedBy: user.uid
             }
@@ -1117,24 +1132,32 @@ function Scanner({ user }) {
       );
 
       if (outcome.code === 'accepted') {
+        setScanLight('green');
+
         setResult({
           type: 'ok',
-          title: 'TOEGANG GOEDGEKEURD',
-          message: outcome.data.ticketNumber
+          title: 'BINNEN',
+          message: `${outcome.data.ticketNumber} • Toegang goedgekeurd`
         });
       } else if (outcome.code === 'used') {
+        setScanLight('red');
+
         setResult({
-          type: 'warn',
-          title: 'REEDS GEBRUIKT',
-          message: outcome.data.ticketNumber
+          type: 'bad',
+          title: 'REEDS GESCAND',
+          message: `${outcome.data.ticketNumber} • Is al binnen`
         });
       } else if (outcome.code === 'blocked') {
+        setScanLight('red');
+
         setResult({
           type: 'bad',
           title: 'TICKET GEBLOKKEERD',
           message: outcome.data.ticketNumber
         });
       } else {
+        setScanLight('red');
+
         setResult({
           type: 'bad',
           title: 'ONGELDIG',
@@ -1143,6 +1166,7 @@ function Scanner({ user }) {
       }
     } catch (error) {
       console.error(error);
+      setScanLight('red');
 
       setResult({
         type: 'bad',
@@ -1379,7 +1403,18 @@ function Scanner({ user }) {
               gap: '10px',
               padding: '12px 14px',
               borderRadius: '12px',
-              background: '#f6f1eb'
+              background:
+                scanLight === 'red'
+                  ? '#ffe4e4'
+                  : scanLight === 'green'
+                  ? '#e0f7e9'
+                  : '#f6f1eb',
+              border:
+                scanLight === 'red'
+                  ? '2px solid #d32f2f'
+                  : scanLight === 'green'
+                  ? '2px solid #20a35a'
+                  : '2px solid transparent'
             }}
           >
             <span
@@ -1388,16 +1423,28 @@ function Scanner({ user }) {
                 height: '11px',
                 borderRadius: '50%',
                 background:
-                  hidStatus === 'Ticket controleren...'
+                  scanLight === 'red'
+                    ? '#d32f2f'
+                    : scanLight === 'green'
+                    ? '#20a35a'
+                    : hidStatus === 'Ticket controleren...'
                     ? '#d49a32'
-                    : '#2f9d5d',
+                    : '#7a7a7a',
                 display: 'inline-block',
                 flexShrink: 0
               }}
             />
 
             <div>
-              <strong>{hidStatus}</strong>
+              <strong>
+                {
+                  scanLight === 'red'
+                    ? 'ROOD — REEDS GESCAND'
+                    : scanLight === 'green'
+                    ? 'GROEN — BINNEN'
+                    : hidStatus
+                }
+              </strong>
 
               {hidLastScan && (
                 <div
@@ -1463,7 +1510,7 @@ function TicketStatus({ ticket }) {
   if (ticket.blocked) {
     statusClass = 'blocked';
     text = 'Geblokkeerd';
-  } else if (ticket.status === 'used') {
+  } else if (['used', 'Binnen'].includes(ticket.status)) {
     statusClass = 'used';
     text = 'Binnen';
   }
